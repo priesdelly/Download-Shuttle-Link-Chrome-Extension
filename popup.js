@@ -63,7 +63,7 @@ function handleDownloadShuttleClick(event) {
     // Close popup after a delay
     setTimeout(() => {
         window.close();
-    }, 10000);
+    }, 5000);
 }
 
 function useBrowserDownload() {
