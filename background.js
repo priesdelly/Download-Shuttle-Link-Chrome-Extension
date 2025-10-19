@@ -76,28 +76,22 @@ async function sendToDownloadShuttle(links) {
   try {
     // Create JSON array and encode
     const content = encodeURIComponent(JSON.stringify(validLinks));
-    const url = `downloadshuttle://add/${content}`;
+    const protocolUrl = `downloadshuttle://add/${content}`;
 
     console.log('[Download Shuttle Link] Sending:', validLinks);
+    console.log('[Download Shuttle Link] Protocol URL:', protocolUrl);
 
-    // Create a hidden tab to trigger the protocol
-    const tab = await chrome.tabs.create({
-      url: url,
-      active: false
+    // Use the redirect.html file with the protocol URL in the hash
+    // DON'T encode again - just pass the protocol URL as-is in the hash
+    const redirectUrl = chrome.runtime.getURL('redirect.html') + '#' + protocolUrl;
+
+    // Open the redirect page - user will click the button to trigger protocol
+    await chrome.tabs.create({
+      url: redirectUrl,
+      active: true
     });
 
-    // Close the tab after a short delay
-    setTimeout(() => {
-      chrome.tabs.remove(tab.id).catch(() => {});
-    }, 1000);
-
-    // Show success notification
-    chrome.notifications.create({
-      type: 'basic',
-      iconUrl: 'icons/icon48.png',
-      title: 'Download Shuttle Link',
-      message: `Sent ${validLinks.length} download(s) to Download Shuttle`
-    });
+    // Note: The redirect.html page will handle closing itself after user clicks
 
   } catch (error) {
     console.error('[Download Shuttle Link] Error:', error);
@@ -107,13 +101,13 @@ async function sendToDownloadShuttle(links) {
       type: 'basic',
       iconUrl: 'icons/icon48.png',
       title: 'Download Shuttle Link Error',
-      message: 'Failed to communicate with Download Shuttle'
+      message: 'Failed to open Download Shuttle redirect page'
     });
   }
 }
 
 // Main download interception listener
-chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
+chrome.downloads.onCreated.addListener((downloadItem) => {
   console.log('[Download Shuttle Link] Download detected:', downloadItem.url);
   console.log('[Download Shuttle Link] MIME type:', downloadItem.mime);
 
@@ -124,16 +118,17 @@ chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
   if (shouldIntercept) {
     console.log('[Download Shuttle Link] Intercepting download');
 
-    // Cancel the browser's download
-    chrome.downloads.cancel(downloadItem.id);
+    // Cancel the browser's download immediately
+    chrome.downloads.cancel(downloadItem.id, () => {
+      // Remove from download history
+      chrome.downloads.erase({ id: downloadItem.id });
+    });
 
     // Send to Download Shuttle
     sendToDownloadShuttle([downloadItem.url]);
   } else {
     console.log('[Download Shuttle Link] Allowing browser download');
   }
-
-  suggest();
 });
 
 // Log when extension is installed or updated
