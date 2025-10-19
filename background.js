@@ -5,6 +5,9 @@
  * them to the Download Shuttle app via a custom protocol.
  */
 
+// Track downloads initiated by browser download button (should not be intercepted)
+const browserDownloadIds = new Set();
+
 const FILE_EXTENSIONS = [
   '.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz',
   '.exe', '.msi', '.dmg', '.pkg', '.deb', '.rpm', '.apk', '.ipa',
@@ -58,9 +61,23 @@ async function sendToDownloadShuttle(links) {
     console.log('[Download Shuttle Link] Sending:', validLinks);
     console.log('[Download Shuttle Link] Protocol URL:', protocolUrl);
 
-    const redirectUrl = chrome.runtime.getURL('redirect.html') + '#' + protocolUrl;
+    // Store download info for popup to access
+    await chrome.storage.local.set({
+      pendingDownload: {
+        urls: validLinks,
+        protocolUrl: protocolUrl
+      }
+    });
 
-    await chrome.tabs.create({ url: redirectUrl, active: true });
+    // Show popup window instead of new tab
+    const popupUrl = chrome.runtime.getURL('popup.html');
+    await chrome.windows.create({
+      url: popupUrl,
+      type: 'popup',
+      width: 420,
+      height: 457,
+      focused: true
+    });
 
   } catch (error) {
     console.error('[Download Shuttle Link] Error:', error);
@@ -68,7 +85,7 @@ async function sendToDownloadShuttle(links) {
       type: 'basic',
       iconUrl: 'icons/icon48.png',
       title: 'Download Shuttle Link Error',
-      message: 'Failed to open Download Shuttle redirect page'
+      message: 'Failed to open Download Shuttle popup'
     });
   }
 }
@@ -76,6 +93,13 @@ async function sendToDownloadShuttle(links) {
 chrome.downloads.onCreated.addListener((downloadItem) => {
   console.log('[Download Shuttle Link] Download detected:', downloadItem.url);
   console.log('[Download Shuttle Link] MIME type:', downloadItem.mime);
+
+  // Check if this is a browser-initiated download (should not be intercepted)
+  if (browserDownloadIds.has(downloadItem.id)) {
+    console.log('[Download Shuttle Link] Browser download - allowing');
+    browserDownloadIds.delete(downloadItem.id); // Clean up
+    return;
+  }
 
   const shouldIntercept = shouldInterceptByExtension(downloadItem.url) ||
                           shouldInterceptByMime(downloadItem.mime);
@@ -95,6 +119,37 @@ chrome.downloads.onCreated.addListener((downloadItem) => {
 
 chrome.runtime.onInstalled.addListener((details) => {
   console.log('[Download Shuttle Link] Extension installed/updated:', details.reason);
+});
+
+// Handle messages from popup
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === 'browserDownload') {
+    console.log('[Download Shuttle Link] Starting browser downloads:', message.urls);
+
+    // Download each URL using browser's download API
+    message.urls.forEach(url => {
+      chrome.downloads.download({
+        url: url,
+        saveAs: true // Show save dialog for each file
+      }, (downloadId) => {
+        if (chrome.runtime.lastError) {
+          console.error('[Download Shuttle Link] Browser download error:', chrome.runtime.lastError);
+        } else {
+          console.log('[Download Shuttle Link] Browser download started:', downloadId);
+          // Mark this download ID as browser-initiated so it won't be intercepted
+          browserDownloadIds.add(downloadId);
+
+          // Clean up after 30 seconds in case something goes wrong
+          setTimeout(() => {
+            browserDownloadIds.delete(downloadId);
+          }, 30000);
+        }
+      });
+    });
+
+    sendResponse({ success: true });
+    return true; // Keep message channel open for async response
+  }
 });
 
 console.log('[Download Shuttle Link] Background script loaded');
