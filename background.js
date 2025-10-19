@@ -75,7 +75,7 @@ async function sendToDownloadShuttle(links) {
       url: popupUrl,
       type: 'popup',
       width: 420,
-      height: 457,
+      height: 460,
       focused: true
     });
 
