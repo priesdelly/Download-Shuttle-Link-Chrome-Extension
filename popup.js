@@ -33,37 +33,47 @@ if (sendLink) {
     sendLink.addEventListener('click', handleDownloadShuttleClick);
 }
 
-function handleDownloadShuttleClick() {
+function handleDownloadShuttleClick(event) {
+    // Let the anchor tag work naturally to trigger protocol handler
     console.log('[Download Shuttle Link] Sending to Download Shuttle');
 
     const button = document.getElementById('sendButton');
     const browserButton = document.getElementById('browserDownloadButton');
 
     button.disabled = true;
-    browserButton.disabled = true;
     button.textContent = '⏳ Opening Download Shuttle...';
-    document.getElementById('noteText').textContent = 'Download Shuttle should open now';
+    document.getElementById('noteText').textContent = 'Opening Download Shuttle...';
 
-    // Clear pending download
-    chrome.storage.local.remove(['pendingDownload']);
+    // Clear pending download immediately to prevent background from processing it again
+    chrome.storage.local.remove(['pendingDownload'], () => {
+        console.log('[Download Shuttle Link] Cleared pending download');
+    });
+
+    // Update UI after protocol attempt
+    setTimeout(() => {
+        button.textContent = '✓ Sent to Download Shuttle';
+        button.disabled = false;
+        browserButton.disabled = false;
+
+        document.getElementById('noteText').textContent = 'App not opening? Use Browser Download instead.';
+
+        console.log('[Download Shuttle Link] Protocol handler called');
+    }, 1500);
 
     // Close popup after a delay
     setTimeout(() => {
         window.close();
-    }, 2000);
+    }, 10000);
 }
 
-// Handle Browser Download button click
-document.getElementById('browserDownloadButton').addEventListener('click', () => {
+function useBrowserDownload() {
     console.log('[Download Shuttle Link] Using browser download');
 
     const button = document.getElementById('browserDownloadButton');
-    const shuttleButton = document.getElementById('sendButton');
 
-    button.disabled = true;
-    shuttleButton.disabled = true;
     button.textContent = '⏳ Starting Download...';
-    document.getElementById('noteText').textContent = 'Browser download starting...';
+    button.disabled = true;
+    document.getElementById('noteText').textContent = 'Starting browser download...';
 
     // Request background to start browser downloads
     chrome.runtime.sendMessage({
@@ -76,6 +86,18 @@ document.getElementById('browserDownloadButton').addEventListener('click', () =>
         // Close popup after a delay
         setTimeout(() => {
             window.close();
-        }, 2000);
+        }, 1500);
     });
+}
+
+// Handle Browser Download button click
+document.getElementById('browserDownloadButton').addEventListener('click', () => {
+    const button = document.getElementById('browserDownloadButton');
+    const shuttleButton = document.getElementById('sendButton');
+
+    button.disabled = true;
+    shuttleButton.disabled = true;
+    document.getElementById('noteText').textContent = 'Browser download starting...';
+
+    useBrowserDownload();
 });
