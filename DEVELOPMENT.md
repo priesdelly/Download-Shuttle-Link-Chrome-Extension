@@ -251,13 +251,6 @@ console.log('[Download Shuttle Link] Intercepting:', url);
 5. Update documentation if needed
 6. Submit pull request
 
-### Feature Ideas
-- [ ] Settings page to customize file types
-- [ ] Download history tracking
-- [ ] Keyboard shortcuts
-- [ ] Support for other download manager apps
-- [ ] Chrome Web Store listing
-
 ### Bug Reports
 Include:
 - Browser version (Chrome/Edge)
