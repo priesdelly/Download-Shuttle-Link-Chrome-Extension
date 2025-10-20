@@ -54,10 +54,10 @@ A Chrome/Edge extension that sends your downloads to the [Download Shuttle](http
 
 ## Privacy & Security
 
-✅ **No tracking** - No data collection, no analytics
-✅ **No servers** - Everything runs locally in your browser
-✅ **Open source** - All code is visible and auditable
-✅ **Minimal permissions** - Only what's needed to work
+- ✅ **No tracking** - No data collection, no analytics
+- ✅ **No servers** - Everything runs locally in your browser
+- ✅ **Open source** - All code is visible and auditable
+- ✅ **Minimal permissions** - Only what's needed to work
 
 **How to verify:** Check the code at `chrome://extensions/` → Details → View installation path. The key files are `background.js`, `popup.js`, and `manifest.json`.
 
