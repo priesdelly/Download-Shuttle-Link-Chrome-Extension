@@ -45,12 +45,12 @@ A Chrome/Edge extension that sends your downloads to the [Download Shuttle](http
 
 ## Supported File Types
 
-**Archives:** `.zip`, `.rar`, `.7z`, `.tar`, `.gz`, `.bz2`, `.xz`
-**Installers:** `.exe`, `.msi`, `.dmg`, `.pkg`, `.deb`, `.rpm`, `.apk`, `.ipa`
-**Documents:** `.pdf`, `.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`
-**Videos:** `.mp4`, `.mkv`, `.avi`, `.mov`, `.wmv`, `.flv`, `.webm`
-**Audio:** `.mp3`, `.wav`, `.flac`, `.aac`, `.ogg`, `.m4a`
-**Other:** `.iso`, `.img`, `.bin`, `.torrent`
+- **Archives:** `.zip`, `.rar`, `.7z`, `.tar`, `.gz`, `.bz2`, `.xz`
+- **Installers:** `.exe`, `.msi`, `.dmg`, `.pkg`, `.deb`, `.rpm`, `.apk`, `.ipa`
+- **Documents:** `.pdf`, `.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`
+- **Videos:** `.mp4`, `.mkv`, `.avi`, `.mov`, `.wmv`, `.flv`, `.webm`
+- **Audio:** `.mp3`, `.wav`, `.flac`, `.aac`, `.ogg`, `.m4a`
+- **Other:** `.iso`, `.img`, `.bin`, `.torrent`
 
 ## Privacy & Security
 
@@ -86,6 +86,8 @@ Want to understand how it works or contribute? See [DEVELOPMENT.md](DEVELOPMENT.
 ## Disclaimer
 
 ⚠️ **Unofficial extension** - Not affiliated with FIPLAB Ltd. (creators of Download Shuttle)
+
+⚠️ This project contains a significant amount of code written using the **Vibe coding** methodology
 
 ## License
 
