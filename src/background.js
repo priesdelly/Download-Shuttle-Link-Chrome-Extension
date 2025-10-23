@@ -90,7 +90,7 @@ async function sendToDownloadShuttle(links) {
   }
 }
 
-chrome.downloads.onCreated.addListener((downloadItem) => {
+chrome.downloads.onCreated.addListener(async (downloadItem) => {
   console.log('[Download Shuttle Link] Download detected:', downloadItem.url);
   console.log('[Download Shuttle Link] MIME type:', downloadItem.mime);
 
@@ -98,6 +98,21 @@ chrome.downloads.onCreated.addListener((downloadItem) => {
   if (browserDownloadIds.has(downloadItem.id)) {
     console.log('[Download Shuttle Link] Browser download - allowing');
     browserDownloadIds.delete(downloadItem.id); // Clean up
+    return;
+  }
+
+  // Check if user is holding Alt (Option) to bypass interception
+  const storageData = await chrome.storage.local.get(['bypassInterception', 'lastClickTime']);
+  const bypassInterception = storageData.bypassInterception || false;
+  const lastClickTime = storageData.lastClickTime || 0;
+  const timeSinceClick = Date.now() - lastClickTime;
+
+  // Only bypass if the key was pressed recently (within 2 seconds)
+  // This prevents stale bypass state from affecting future downloads
+  if (bypassInterception && timeSinceClick < 2000) {
+    console.log('[Download Shuttle Link] Alt (Option) held - bypassing interception');
+    // Clear bypass state
+    chrome.storage.local.set({ bypassInterception: false });
     return;
   }
 
@@ -123,6 +138,18 @@ chrome.runtime.onInstalled.addListener((details) => {
 
 // Handle messages from popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Handle bypass state from content script
+  if (message.action === 'setBypass') {
+    chrome.storage.local.set({
+      bypassInterception: message.bypass,
+      lastClickTime: message.timestamp || Date.now()
+    });
+    console.log('[Download Shuttle Link] Bypass state set:', message.bypass);
+    sendResponse({ success: true });
+    return true;
+  }
+
+  // Handle browser download from popup
   if (message.action === 'browserDownload') {
     console.log('[Download Shuttle Link] Starting browser downloads:', message.urls);
 
