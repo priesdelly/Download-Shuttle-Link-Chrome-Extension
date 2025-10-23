@@ -20,11 +20,21 @@ Technical documentation for developers working on the Download Shuttle Link exte
 ## Architecture
 
 ```
-Browser Download
+User clicks download link
+      ↓
+content.js (Content Script)
+  • Detects Alt key state
+  • Sends bypass flag to background
+      ↓
+Browser Download Event
       ↓
 background.js (Service Worker)
-  • Detects download
-  • Checks file type
+  • Detects download (async listener)
+  • Checks bypass flag from storage
+  • If bypassed → Allow browser download
+  • If not bypassed → Check file type
+      ↓
+[If intercepted]
   • Cancels browser download
   • Opens popup window
       ↓
@@ -47,6 +57,7 @@ Download Shuttle App
 Download Shuttle Link/
 ├── manifest.json          # Extension config & permissions
 ├── background.js          # Service worker (monitors downloads)
+├── content.js             # Content script (tracks keyboard state)
 ├── popup.html             # Popup UI
 ├── popup.js               # Popup logic
 ├── icons/                 # Extension icons
@@ -57,11 +68,20 @@ Download Shuttle Link/
 ### Key Files Explained
 
 **`background.js`** - Service Worker
-- Listens for downloads via `chrome.downloads.onCreated`
+- Listens for downloads via `chrome.downloads.onCreated` (async listener)
+- Checks bypass flag from `chrome.storage.local` before intercepting
 - Checks if file type should be intercepted (by extension or MIME type)
 - Cancels browser download with `chrome.downloads.cancel()`
 - Opens popup window with `chrome.windows.create()`
 - Stores download data in `chrome.storage.local`
+- Handles messages from content script and popup
+
+**`content.js`** - Content Script
+- Runs on all pages to track keyboard state
+- Detects Alt (Option) key press/release
+- Sends bypass state to background via `chrome.runtime.sendMessage()`
+- Captures keyboard state at click time for accurate detection
+- No direct access to `chrome.storage` (must use messaging)
 
 **`popup.js`** - Popup Logic
 - Reads pending download from storage
@@ -77,7 +97,8 @@ Download Shuttle Link/
 - Auto-closes after success
 
 **`manifest.json`** - Configuration
-- Permissions: `downloads`, `notifications`, `tabs`, `scripting`, `storage`
+- Permissions: `downloads`, `notifications`, `storage`
+- Content scripts: Runs `content.js` on all URLs
 - Uses Manifest V3 (service worker, not background page)
 
 ---
@@ -238,6 +259,66 @@ console.log('[Download Shuttle Link] Intercepting:', url);
 
 **Problem:** When user clicks "Browser Download", the background script would intercept it again
 **Solution:** Store download IDs in `browserDownloadIds` Set, skip those in the interceptor
+
+### Why Use Async Listener for Downloads?
+
+```javascript
+// ❌ Synchronous (old way)
+chrome.downloads.onCreated.addListener((downloadItem) => {
+  // Can't await storage operations
+});
+
+// ✅ Asynchronous (current way)
+chrome.downloads.onCreated.addListener(async (downloadItem) => {
+  const data = await chrome.storage.local.get(['bypassInterception']);
+  // Now we can check bypass state before intercepting
+});
+```
+
+**Reason:** Need to read bypass flag from storage before deciding to intercept. Async/await makes this clean and readable.
+
+### Why Content Script Can't Access chrome.storage Directly?
+
+**Manifest V3 restriction:** Content scripts run in isolated context
+**Solution:** Use message passing via `chrome.runtime.sendMessage()`
+
+**Communication flow:**
+```javascript
+// content.js (isolated context)
+chrome.runtime.sendMessage({ action: 'setBypass', bypass: true });
+
+// background.js (extension context)
+chrome.runtime.onMessage.addListener((message) => {
+  chrome.storage.local.set({ bypassInterception: message.bypass });
+});
+```
+
+### Why Alt Key Instead of Cmd/Shift?
+
+**Tested keyboard shortcuts:**
+- ❌ **Cmd + Click** → Opens link in new tab (conflicts)
+- ❌ **Shift + Click** → Opens link in new window (conflicts)
+- ❌ **Cmd + Alt + Click** → Opens in new tab (Cmd has priority)
+- ✅ **Alt + Click** → No browser default action (perfect!)
+
+**Implementation:** Check for Alt only with no other modifiers:
+```javascript
+if (event.altKey && !event.metaKey && !event.shiftKey && !event.ctrlKey)
+```
+
+### Why 2-Second Timeout for Bypass State?
+
+**Problem:** Bypass flag could stay active accidentally
+**Solution:** Only honor bypass if set within 2 seconds of download start
+
+```javascript
+const timeSinceClick = Date.now() - lastClickTime;
+if (bypassInterception && timeSinceClick < 2000) {
+  // Bypass is fresh, honor it
+}
+```
+
+**Prevents:** Stale bypass state from affecting unrelated downloads
 
 ---
 
