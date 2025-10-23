@@ -1,5 +1,7 @@
 # Development Guide
 
+**Languages:** [English](#development-guide) | [ไทย (Thai)](DEVELOPMENT_TH.md)
+
 Technical documentation for developers working on the Download Shuttle Link extension.
 
 ## Quick Overview

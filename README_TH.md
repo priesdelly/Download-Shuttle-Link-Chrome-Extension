@@ -1,5 +1,7 @@
 # Download Shuttle Link
 
+**ภาษา:** [English](README.md) | [ไทย (Thai)](#download-shuttle-link)
+
 ส่วนขยาย Chrome/Edge ที่ส่งไฟล์ดาวน์โหลดของคุณไปยังแอป [Download Shuttle](http://fiplab.com) บน macOS
 
 ## ฟีเจอร์

@@ -1,5 +1,7 @@
 # Download Shuttle Link
 
+**Languages:** [English](#download-shuttle-link) | [ไทย (Thai)](README_TH.md)
+
 A Chrome/Edge extension that sends your downloads to the [Download Shuttle](http://fiplab.com) app on macOS.
 
 ## Features
