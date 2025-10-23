@@ -1,5 +1,7 @@
 # Download Shuttle Link
 
+**Languages:** [English](#download-shuttle-link) | [ไทย (Thai)](README_TH.md)
+
 A Chrome/Edge extension that sends your downloads to the [Download Shuttle](http://fiplab.com) app on macOS.
 
 ## Features
@@ -7,6 +9,7 @@ A Chrome/Edge extension that sends your downloads to the [Download Shuttle](http
 - 🚀 **Automatic interception** - Catches downloads before your browser handles them
 - 📦 **30+ file types** - Archives, videos, documents, installers, and more
 - 🎯 **Simple popup** - Click one button to send downloads to the app
+- ⌨️ **Bypass with Alt key** - Hold Alt (Option) + Click to skip interception
 - 🔒 **Private** - No data collection, everything stays local
 - ⚡ **Fallback option** - Use browser download if Download Shuttle isn't available
 
@@ -36,12 +39,19 @@ A Chrome/Edge extension that sends your downloads to the [Download Shuttle](http
 
 ## Usage
 
+### Normal Download (via Download Shuttle)
 1. Click any download link for a supported file type
 2. A popup appears with download details
 3. Click **"📥 Send to Download Shuttle"**
 4. Download Shuttle opens and starts downloading
 
-**Fallback:** If Download Shuttle doesn't open, click **"Browser Download"** to download normally.
+### Bypass Interception (Direct Browser Download)
+**Hold Alt (Option ⌥) key while clicking** a download link to bypass the extension and download directly with your browser.
+
+- **Alt + Click** = Direct browser download (no popup)
+- **Normal Click** = Shows popup to send to Download Shuttle
+
+**Fallback:** If Download Shuttle doesn't open, click **"Browser Download"** button in the popup to download normally.
 
 ## Supported File Types
 
