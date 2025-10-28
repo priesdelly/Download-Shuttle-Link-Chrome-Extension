@@ -21,12 +21,18 @@ document.addEventListener('keyup', (event) => {
 }, true);
 
 // Listen for requests from background to check Alt key state
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === 'checkAltKey') {
-    sendResponse({ altKeyPressed: altKeyPressed });
-    console.log('[Download Shuttle Link] Alt key state checked:', altKeyPressed);
+try {
+  if (chrome.runtime?.id) {
+    chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+      if (request.action === 'checkAltKey') {
+        sendResponse({ altKeyPressed: altKeyPressed });
+        console.log('[Download Shuttle Link] Alt key state checked:', altKeyPressed);
+      }
+      return true;
+    });
   }
-  return true;
-});
+} catch (error) {
+  console.warn('[Download Shuttle Link] Could not setup message listener:', error.message);
+}
 
 console.log('[Download Shuttle Link] Content script loaded');
