@@ -105,6 +105,78 @@ Download Shuttle Link/
 
 ---
 
+## Storage Strategy: `chrome.storage.session`
+
+### Why Session Storage?
+
+We use `chrome.storage.session` for storing pending downloads instead of `chrome.storage.local`. Here's why:
+
+**`chrome.storage.session` advantages:**
+- ✅ **Auto-clears on browser close** - No stale data left behind
+- ✅ **Perfect for temporary data** - Pending downloads are short-lived
+- ✅ **Prevents lingering popups** - Solves the "popup opens on restart" issue
+- ✅ **Extension-native lifecycle** - Clears when extension unloads
+
+**The Problem We Fixed:**
+```
+Before: Browser closes with unsent download → Browser reopens → Popup appears (data lingered)
+After:  Browser closes with unsent download → Browser reopens → No popup (session data cleared)
+```
+
+### How It Works
+
+1. **Download detected** → Store in `chrome.storage.session` with timestamp
+   ```javascript
+   await chrome.storage.session.set({
+     pendingDownload: {
+       urls: validLinks,
+       protocolUrl: protocolUrl,
+       timestamp: Date.now()
+     }
+   });
+   ```
+
+2. **Popup opens** → Check age of pending download
+   ```javascript
+   const age = Date.now() - data.timestamp;
+   if (age > 5 * 60 * 1000) {
+     // Older than 5 minutes, close and cleanup
+     cleanupPendingDownload();
+     window.close();
+   }
+   ```
+
+3. **User closes popup** → Cleanup immediately
+   ```javascript
+   window.addEventListener('beforeunload', () => {
+     if (!actionCompleted) {
+       chrome.storage.session.remove(['pendingDownload']);
+     }
+   });
+   ```
+
+4. **No action for 5 minutes** → Auto-close and cleanup
+   ```javascript
+   setTimeout(() => {
+     if (!actionCompleted) {
+       cleanupPendingDownload();
+       window.close();
+     }
+   }, 5 * 60 * 1000);
+   ```
+
+5. **Browser closes** → Session storage auto-clears
+   - Chrome automatically clears all session storage
+
+### Migration from `chrome.storage.local`
+
+If updating from an older version, no migration needed because:
+- Old `local` storage data won't be read (we only check `session`)
+- Session storage is completely separate
+- Eventually old data will be ignored naturally
+
+---
+
 ## How the Protocol Handler Works
 
 ### Protocol Format
@@ -201,6 +273,8 @@ window.location.href = 'downloadshuttle://add/%5B%22https%3A%2F%2Fexample.com%2F
 | Protocol not working | Double encoding | Check encoding (only once) |
 | Permission popup repeats | User didn't click "Always allow" | Click "Always allow" not "Allow" |
 | Downloads not intercepted | File type not in list | Add to `FILE_EXTENSIONS` array |
+| Popup appears after restart | Old data lingering in storage | Already fixed with session storage |
+| Popup doesn't auto-close | User didn't complete action | 5-min timeout + popup cleanup on close |
 
 ---
 
@@ -321,6 +395,22 @@ if (bypassInterception && timeSinceClick < 2000) {
 ```
 
 **Prevents:** Stale bypass state from affecting unrelated downloads
+
+### Why Session Storage Over Local Storage?
+
+**Problem:** Pending downloads stored in `chrome.storage.local` could persist after browser restarts
+**Scenario:** User closes browser without handling download → Browser restarts → Old popup reappears
+
+**Solution:** Use `chrome.storage.session`
+- Automatically clears when browser closes
+- Cleared when extension reloads
+- Perfect for temporary data like pending downloads
+- Prevents stale data issues completely
+
+**Additional Safety Measures:**
+- Auto-cleanup after 5 minutes if user abandons popup
+- Cleanup on popup close (user clicks X or ESC)
+- Check timestamp on popup open - if older than 5 min, auto-close
 
 ---
 

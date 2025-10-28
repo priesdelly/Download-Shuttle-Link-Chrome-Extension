@@ -105,6 +105,78 @@ Download Shuttle Link/
 
 ---
 
+## กลยุทธ์ Storage: `chrome.storage.session`
+
+### ทำไมใช้ Session Storage?
+
+เราใช้ `chrome.storage.session` ในการเก็บการดาวน์โหลดที่รอดำเนิน แทนที่จะใช้ `chrome.storage.local` เหตุผลคือ:
+
+**ข้อดีของ `chrome.storage.session`:**
+- ✅ **ล้างข้อมูลอัตโนมัติเมื่อเบราว์เซอร์ปิด** - ไม่มีข้อมูลเก่าค้างอยู่
+- ✅ **เหมาะสำหรับข้อมูลชั่วคราว** - การดาวน์โหลดที่รอเป็นข้อมูลระยะสั้น
+- ✅ **ป้องกันป๊อปอัปค้าง** - แก้ปัญหาที่ "ป๊อปอัปเปิดเมื่อ restart browser"
+- ✅ **Lifecycle ของ extension** - ล้างเมื่อ extension ปิด
+
+**ปัญหาที่เราแก้ไข:**
+```
+ก่อน: เบราว์เซอร์ปิดโดยดาวน์โหลดยังไม่ส่ง → เบราว์เซอร์เปิดใหม่ → ป๊อปอัปเปิด (ข้อมูลค้าง)
+หลัง: เบราว์เซอร์ปิดโดยดาวน์โหลดยังไม่ส่ง → เบราว์เซอร์เปิดใหม่ → ไม่มีป๊อปอัป (session ล้างแล้ว)
+```
+
+### วิธีการทำงาน
+
+1. **ตรวจสอบการดาวน์โหลด** → เก็บใน `chrome.storage.session` พร้อม timestamp
+   ```javascript
+   await chrome.storage.session.set({
+     pendingDownload: {
+       urls: validLinks,
+       protocolUrl: protocolUrl,
+       timestamp: Date.now()
+     }
+   });
+   ```
+
+2. **เปิดป๊อปอัป** → ตรวจสอบอายุของการดาวน์โหลดที่รอ
+   ```javascript
+   const age = Date.now() - data.timestamp;
+   if (age > 5 * 60 * 1000) {
+     // เก่าเกิน 5 นาที ปิดและล้าง
+     cleanupPendingDownload();
+     window.close();
+   }
+   ```
+
+3. **ผู้ใช้ปิดป๊อปอัป** → ล้างทันที
+   ```javascript
+   window.addEventListener('beforeunload', () => {
+     if (!actionCompleted) {
+       chrome.storage.session.remove(['pendingDownload']);
+     }
+   });
+   ```
+
+4. **ไม่มีการกระทำเป็นเวลา 5 นาที** → ปิดและล้างอัตโนมัติ
+   ```javascript
+   setTimeout(() => {
+     if (!actionCompleted) {
+       cleanupPendingDownload();
+       window.close();
+     }
+   }, 5 * 60 * 1000);
+   ```
+
+5. **เบราว์เซอร์ปิด** → Session storage ล้างอัตโนมัติ
+   - Chrome ล้าง session storage ทั้งหมดอัตโนมัติ
+
+### การย้ายจาก `chrome.storage.local`
+
+ถ้าอัปเดตจากเวอร์ชันเก่า ไม่ต้องย้ายข้อมูล เพราะ:
+- ข้อมูลเก่า `local` storage จะไม่ถูกอ่าน (เราตรวจสอบ `session` เท่านั้น)
+- Session storage แยกจาก local storage อย่างสิ้นเชิน
+- ข้อมูลเก่าจะถูกละเว้นตามธรรมชาติในที่สุด
+
+---
+
 ## วิธีการทำงานของ Protocol Handler
 
 ### รูปแบบ Protocol
@@ -201,6 +273,8 @@ window.location.href = 'downloadshuttle://add/%5B%22https%3A%2F%2Fexample.com%2F
 | Protocol ไม่ทำงาน | Encode ซ้ำสองครั้ง | ตรวจสอบ encoding (ครั้งเดียวเท่านั้น) |
 | ป๊อปอัปขออนุญาตซ้ำๆ | ผู้ใช้ไม่คลิก "อนุญาตเสมอ" | คลิก "อนุญาตเสมอ" ไม่ใช่ "อนุญาต" |
 | การดาวน์โหลดไม่ถูกดักจับ | ชนิดไฟล์ไม่อยู่ในรายการ | เพิ่มเข้า array `FILE_EXTENSIONS` |
+| ป๊อปอัปปรากฏหลัง restart | ข้อมูลเก่าค้างใน storage | แล้วแก้แล้ว (ใช้ session storage) |
+| ป๊อปอัปไม่ปิดเอง | ผู้ใช้ไม่ได้ทำการกระทำ | รอ 5 นาที + ปิด popup เมื่อปิดหน้าต่าง |
 
 ---
 
@@ -256,6 +330,22 @@ console.log('[Download Shuttle Link] Intercepting:', url);
 **ความต้องการ:** ส่งข้อมูลการดาวน์โหลดจาก background ไปยัง popup
 **ทางเลือกอื่น:** URL hash (วิธีเก่า)
 **ตัวเลือก:** Storage สะอาดกว่า รองรับหลาย URL ไม่มีปัญหา encoding
+
+### ทำไมต้องใช้ Session Storage แทน Local Storage?
+
+**ปัญหา:** การดาวน์โหลดที่รอเก็บใน `chrome.storage.local` อาจคงอยู่หลังจากเบราว์เซอร์ restart
+**สถานการณ์:** ผู้ใช้ปิดเบราว์เซอร์โดยไม่ส่งการดาวน์โหลด → เบราว์เซอร์เปิดใหม่ → ป๊อปอัปเก่าปรากฏขึ้น
+
+**วิธีแก้:** ใช้ `chrome.storage.session`
+- ล้างอัตโนมัติเมื่อเบราว์เซอร์ปิด
+- ล้างเมื่อ extension ถูกโหลดใหม่
+- เหมาะสำหรับข้อมูลชั่วคราวเช่นการดาวน์โหลดที่รอ
+- ป้องกันปัญหาข้อมูลเก่าอย่างสมบูรณ์
+
+**มาตรการความปลอดภัยเพิ่มเติม:**
+- ล้างอัตโนมัติหลัง 5 นาที ถ้าผู้ใช้ทิ้งป๊อปอัปไว้
+- ล้างเมื่อป๊อปอัปปิด (ผู้ใช้กด X หรือ ESC)
+- ตรวจสอบ timestamp เมื่อเปิดป๊อปอัป - ถ้าเก่าเกิน 5 นาที ปิดอัตโนมัติ
 
 ### ทำไมต้องติดตาม Browser Download IDs?
 
