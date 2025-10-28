@@ -2,10 +2,51 @@
 let protocolUrl = '';
 let downloadUrls = [];
 
-// Get download info from background script
-chrome.storage.local.get(['pendingDownload'], (result) => {
+// Constants
+const EXPIRY_TIME = 5 * 60 * 1000; // 5 minutes in milliseconds
+
+// Cleanup function to remove pending download from session storage
+function cleanupPendingDownload() {
+    chrome.storage.session.remove(['pendingDownload'], () => {
+        console.log('[Download Shuttle Link] Cleaned up pending download from session');
+    });
+}
+
+// Clean up when popup is closed (user presses X, ESC, or closes window)
+// Session storage will also auto-clear on browser close
+window.addEventListener('beforeunload', () => {
+    // Only cleanup if user didn't complete any action
+    if (!window.actionCompleted) {
+        console.log('[Download Shuttle Link] Popup closed without action - cleaning up');
+        cleanupPendingDownload();
+    }
+});
+
+// Flag to track if user completed an action
+window.actionCompleted = false;
+
+// Get download info from background script (stored in session storage)
+chrome.storage.session.get(['pendingDownload'], (result) => {
     if (result.pendingDownload) {
         const data = result.pendingDownload;
+        const timestamp = data.timestamp || 0;
+        const currentTime = Date.now();
+        const age = currentTime - timestamp;
+
+        // Check if pending download is expired (older than 5 minutes)
+        if (age > EXPIRY_TIME) {
+            console.log('[Download Shuttle Link] Pending download expired (age:', age, 'ms) - closing popup');
+            document.getElementById('urlDisplay').textContent = 'Download request expired';
+            document.getElementById('noteText').textContent = 'This download request is too old and has been cancelled.';
+
+            // Clean up and close
+            cleanupPendingDownload();
+            setTimeout(() => {
+                window.close();
+            }, 2000);
+            return;
+        }
+
         protocolUrl = data.protocolUrl;
         downloadUrls = data.urls;
 
@@ -20,6 +61,16 @@ chrome.storage.local.get(['pendingDownload'], (result) => {
         if (sendLink) {
             sendLink.href = protocolUrl;
         }
+
+        // Auto-close after 5 minutes if no action taken
+        setTimeout(() => {
+            if (!window.actionCompleted) {
+                console.log('[Download Shuttle Link] Auto-closing popup after timeout');
+                cleanupPendingDownload();
+                window.close();
+            }
+        }, EXPIRY_TIME);
+
     } else {
         document.getElementById('urlDisplay').textContent = 'Error: No download URL provided';
         document.getElementById('sendButton').disabled = true;
@@ -37,6 +88,9 @@ function handleDownloadShuttleClick(event) {
     // Let the anchor tag work naturally to trigger protocol handler
     console.log('[Download Shuttle Link] Sending to Download Shuttle');
 
+    // Mark action as completed
+    window.actionCompleted = true;
+
     const button = document.getElementById('sendButton');
     const browserButton = document.getElementById('browserDownloadButton');
 
@@ -45,9 +99,7 @@ function handleDownloadShuttleClick(event) {
     document.getElementById('noteText').textContent = 'Opening Download Shuttle...';
 
     // Clear pending download immediately to prevent background from processing it again
-    chrome.storage.local.remove(['pendingDownload'], () => {
-        console.log('[Download Shuttle Link] Cleared pending download');
-    });
+    cleanupPendingDownload();
 
     // Update UI after protocol attempt
     setTimeout(() => {
@@ -69,6 +121,9 @@ function handleDownloadShuttleClick(event) {
 function useBrowserDownload() {
     console.log('[Download Shuttle Link] Using browser download');
 
+    // Mark action as completed
+    window.actionCompleted = true;
+
     const button = document.getElementById('browserDownloadButton');
 
     button.textContent = '⏳ Starting Download...';
@@ -81,7 +136,7 @@ function useBrowserDownload() {
         urls: downloadUrls
     }, (response) => {
         // Clear pending download
-        chrome.storage.local.remove(['pendingDownload']);
+        cleanupPendingDownload();
 
         // Close popup after a delay
         setTimeout(() => {

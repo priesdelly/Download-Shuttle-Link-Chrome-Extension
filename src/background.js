@@ -61,13 +61,18 @@ async function sendToDownloadShuttle(links) {
     console.log('[Download Shuttle Link] Sending:', validLinks);
     console.log('[Download Shuttle Link] Protocol URL:', protocolUrl);
 
-    // Store download info for popup to access
-    await chrome.storage.local.set({
+    // Store download info for popup to access in session storage
+    // This will automatically be cleared when browser session ends
+    const timestamp = Date.now();
+    await chrome.storage.session.set({
       pendingDownload: {
         urls: validLinks,
-        protocolUrl: protocolUrl
+        protocolUrl: protocolUrl,
+        timestamp: timestamp
       }
     });
+
+    console.log('[Download Shuttle Link] Stored in session storage (auto-clears on browser close)');
 
     // Show popup window instead of new tab
     const popupUrl = chrome.runtime.getURL('popup.html');
@@ -78,6 +83,16 @@ async function sendToDownloadShuttle(links) {
       height: 460,
       focused: true
     });
+
+    // Auto-cleanup after 5 minutes as safety measure
+    // Session storage will also clear on browser close
+    setTimeout(async () => {
+      const result = await chrome.storage.session.get(['pendingDownload']);
+      if (result.pendingDownload && result.pendingDownload.timestamp === timestamp) {
+        console.log('[Download Shuttle Link] Cleaning up expired pending download');
+        await chrome.storage.session.remove(['pendingDownload']);
+      }
+    }, 300000); // 5 minutes
 
   } catch (error) {
     console.error('[Download Shuttle Link] Error:', error);
