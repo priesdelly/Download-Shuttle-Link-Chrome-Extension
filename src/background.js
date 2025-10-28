@@ -116,18 +116,22 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
     return;
   }
 
-  // Check if user is holding Alt (Option) to bypass interception
-  const storageData = await chrome.storage.local.get(['bypassInterception', 'lastClickTime']);
-  const bypassInterception = storageData.bypassInterception || false;
-  const lastClickTime = storageData.lastClickTime || 0;
-  const timeSinceClick = Date.now() - lastClickTime;
+  // Check if user is holding Alt (Option) key by asking active tab's content script
+  let altKeyPressed = false;
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tabs[0]?.id) {
+      const response = await chrome.tabs.sendMessage(tabs[0].id, { action: 'checkAltKey' });
+      altKeyPressed = response?.altKeyPressed || false;
+      console.log('[Download Shuttle Link] Alt key check result:', altKeyPressed);
+    }
+  } catch (error) {
+    console.log('[Download Shuttle Link] Could not check Alt key (tab may not have content script)');
+  }
 
-  // Only bypass if the key was pressed recently (within 2 seconds)
-  // This prevents stale bypass state from affecting future downloads
-  if (bypassInterception && timeSinceClick < 2000) {
-    console.log('[Download Shuttle Link] Alt (Option) held - bypassing interception');
-    // Clear bypass state
-    chrome.storage.local.set({ bypassInterception: false });
+  // Bypass interception if Alt key is pressed
+  if (altKeyPressed) {
+    console.log('[Download Shuttle Link] Alt key held - bypassing interception');
     return;
   }
 
@@ -153,17 +157,6 @@ chrome.runtime.onInstalled.addListener((details) => {
 
 // Handle messages from popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // Handle bypass state from content script
-  if (message.action === 'setBypass') {
-    chrome.storage.local.set({
-      bypassInterception: message.bypass,
-      lastClickTime: message.timestamp || Date.now()
-    });
-    console.log('[Download Shuttle Link] Bypass state set:', message.bypass);
-    sendResponse({ success: true });
-    return true;
-  }
-
   // Handle browser download from popup
   if (message.action === 'browserDownload') {
     console.log('[Download Shuttle Link] Starting browser downloads:', message.urls);

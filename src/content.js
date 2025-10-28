@@ -3,43 +3,30 @@
  * Tracks Alt (Option) key to bypass download interception
  */
 
-let bypassKeyPressed = false;
+let altKeyPressed = false;
 
+// Track Alt key state
 document.addEventListener('keydown', (event) => {
-  if (event.altKey && !event.metaKey && !event.shiftKey && !event.ctrlKey) {
-    bypassKeyPressed = true;
-    chrome.runtime.sendMessage({
-      action: 'setBypass',
-      bypass: true
-    }).catch(() => {});
-    console.log('[Download Shuttle Link] Alt detected - bypass enabled');
+  if (event.key === 'Alt' || event.altKey) {
+    altKeyPressed = true;
+    console.log('[Download Shuttle Link] Alt key pressed');
   }
 }, true);
 
 document.addEventListener('keyup', (event) => {
-  if (!event.altKey) {
-    bypassKeyPressed = false;
-    chrome.runtime.sendMessage({
-      action: 'setBypass',
-      bypass: false
-    }).catch(() => {});
-    console.log('[Download Shuttle Link] Alt released - bypass disabled');
+  if (event.key === 'Alt' || !event.altKey) {
+    altKeyPressed = false;
+    console.log('[Download Shuttle Link] Alt key released');
   }
 }, true);
 
-document.addEventListener('click', (event) => {
-  const link = event.target.closest('a');
-  if (link && link.href) {
-    const bypassState = event.altKey && !event.metaKey && !event.shiftKey && !event.ctrlKey;
-    if (bypassState) {
-      chrome.runtime.sendMessage({
-        action: 'setBypass',
-        bypass: true,
-        timestamp: Date.now()
-      }).catch(() => {});
-      console.log('[Download Shuttle Link] Link clicked with Alt - will bypass');
-    }
+// Listen for requests from background to check Alt key state
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === 'checkAltKey') {
+    sendResponse({ altKeyPressed: altKeyPressed });
+    console.log('[Download Shuttle Link] Alt key state checked:', altKeyPressed);
   }
-}, true);
+  return true;
+});
 
 console.log('[Download Shuttle Link] Content script loaded');
