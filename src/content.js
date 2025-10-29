@@ -5,6 +5,11 @@
 
 let altKeyPressed = false;
 
+// Helper function to safely check if chrome API is available
+function isChromeAvailable() {
+  return typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id;
+}
+
 // Track Alt key state
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Alt' || event.altKey) {
@@ -21,18 +26,25 @@ document.addEventListener('keyup', (event) => {
 }, true);
 
 // Listen for requests from background to check Alt key state
-try {
-  if (chrome.runtime?.id) {
+if (isChromeAvailable()) {
+  try {
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-      if (request.action === 'checkAltKey') {
-        sendResponse({ altKeyPressed: altKeyPressed });
-        console.log('[Download Shuttle Link] Alt key state checked:', altKeyPressed);
+      try {
+        if (request.action === 'checkAltKey') {
+          sendResponse({ altKeyPressed: altKeyPressed });
+          console.log('[Download Shuttle Link] Alt key state checked:', altKeyPressed);
+        }
+      } catch (error) {
+        console.warn('[Download Shuttle Link] Error in message listener:', error.message);
       }
       return true;
     });
+    console.log('[Download Shuttle Link] Message listener registered');
+  } catch (error) {
+    console.warn('[Download Shuttle Link] Could not setup message listener:', error.message);
   }
-} catch (error) {
-  console.warn('[Download Shuttle Link] Could not setup message listener:', error.message);
+} else {
+  console.warn('[Download Shuttle Link] Chrome API not available');
 }
 
 console.log('[Download Shuttle Link] Content script loaded');
