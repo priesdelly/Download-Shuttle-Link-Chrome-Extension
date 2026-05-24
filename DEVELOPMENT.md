@@ -22,195 +22,164 @@ Technical documentation for developers working on the Download Shuttle Link exte
 ## Architecture
 
 ```
-User clicks download link
+User clicks a download link
       ↓
-content.js (Content Script)
-  • Detects Alt key state
-  • Sends bypass flag to background
+Browser fires the download
       ↓
-Browser Download Event
-      ↓
-background.js (Service Worker)
-  • Detects download (async listener)
-  • Checks bypass flag from storage
-  • If bypassed → Allow browser download
-  • If not bypassed → Check file type
-      ↓
-[If intercepted]
-  • Cancels browser download
-  • Opens popup window
+background.js — chrome.downloads.onCreated (async)
+  1. Is this URL in our "browser download" guard list? → allow
+  2. Ask content.js: "is Alt held right now?" → if yes, allow
+  3. Does the URL extension or MIME type match? → if no, allow
+  4. Otherwise: cancel + erase the native download, store the
+     pending download info in chrome.storage.session, open popup
       ↓
 popup.html + popup.js
-  • Shows download URL
-  • Two buttons: "Send to App" | "Browser Download"
-  • User clicks one
-      ↓
-Option 1: Download Shuttle        Option 2: Browser Download
-  Protocol handler triggers         Falls back to normal download
-  downloadshuttle://add/URL         Uses chrome.downloads API
-      ↓
-Download Shuttle App
-  Receives URL and downloads
+  • Reads pending download from chrome.storage.session
+  • Two buttons:
+      Option 1: "📥 Download Shuttle App"   Option 2: "🌐 Browser Download"
+      ↓                                     ↓
+  Triggers the downloadshuttle://         Sends a "browserDownload" message
+  link via a real <a> click. The OS       to background. Background marks the
+  hands the URL to the Download           URLs in its guard list FIRST, then
+  Shuttle app.                            calls chrome.downloads.download() —
+                                          the onCreated handler sees the URL
+                                          in the guard list and lets it pass.
 ```
 
 ## Project Structure
 
 ```
-Download Shuttle Link/
-├── manifest.json          # Extension config & permissions
-├── background.js          # Service worker (monitors downloads)
-├── content.js             # Content script (tracks keyboard state)
-├── popup.html             # Popup UI
-├── popup.js               # Popup logic
-├── icons/                 # Extension icons
-├── README.md              # User documentation
-└── DEVELOPMENT.md         # This file
+DownloadShuttleLink-Chrome/
+├── src/
+│   ├── manifest.json     # Extension config & permissions
+│   ├── background.js     # Service worker (intercepts downloads)
+│   ├── content.js        # Content script (tracks Alt key state)
+│   ├── popup.html        # Popup UI
+│   ├── popup.js          # Popup logic
+│   └── icons/            # Extension icons
+├── README.md             # User documentation (English)
+├── README_TH.md          # User documentation (Thai)
+├── DEVELOPMENT.md        # This file
+├── DEVELOPMENT_TH.md     # Thai translation of this file
+└── privacy-policy.md     # Privacy policy
 ```
+
+**Load unpacked:** point Chrome at the `src/` folder (not the repo root) — the manifest lives in `src/`.
 
 ### Key Files Explained
 
-**`background.js`** - Service Worker
-- Listens for downloads via `chrome.downloads.onCreated` (async listener)
-- Checks bypass flag from `chrome.storage.local` before intercepting
-- Checks if file type should be intercepted (by extension or MIME type)
-- Cancels browser download with `chrome.downloads.cancel()`
-- Opens popup window with `chrome.windows.create()`
-- Stores download data in `chrome.storage.local`
-- Handles messages from content script and popup
+**`background.js`** — Service Worker
+- Owns the `chrome.downloads.onCreated` listener (async)
+- Decides whether to intercept based on URL pathname extension, MIME type, the Alt key, and the re-entry guard
+- Cancels the native download with `chrome.downloads.cancel`
+- Opens the popup window with `chrome.windows.create`
+- Handles `browserDownload` messages from the popup
 
-**`content.js`** - Content Script
-- Runs on all pages to track keyboard state
-- Detects Alt (Option) key press/release
-- Sends bypass state to background via `chrome.runtime.sendMessage()`
-- Captures keyboard state at click time for accurate detection
-- No direct access to `chrome.storage` (must use messaging)
+**`content.js`** — Content Script
+- Runs on every page at `document_start`
+- Tracks Alt (Option) key state in a module-level variable
+- Replies to `{ action: 'checkAltKey' }` messages from background
+- Guards `chrome.runtime?.id` because the runtime can be invalidated when the extension reloads while a page is still open
 
-**`popup.js`** - Popup Logic
-- Reads pending download from storage
-- Displays download URL(s) in UI
-- Handles two buttons:
-  - **Send to Download Shuttle:** Creates protocol URL, triggers via `<a>` tag
-  - **Browser Download:** Sends message to background to download via browser
+**`popup.js`** — Popup Logic
+- Reads `pendingDownload` from `chrome.storage.session`
+- Auto-closes if the entry is older than 5 minutes
+- Auto-closes immediately if no entry is present (means the popup was restored by the browser on restart)
+- Wires up the two action buttons; buttons start `disabled` and are enabled only after storage loads
 
-**`popup.html`** - UI
-- Simple gradient background
-- Shows download URL
-- Two action buttons
-- Auto-closes after success
+**`popup.html`** — UI
+- Gradient background, inline styles
+- Two buttons, both initially `disabled`
+- The "Download Shuttle App" button lives inside an `<a id="sendLink">` so the click can trigger the custom protocol
 
-**`manifest.json`** - Configuration
-- Permissions: `downloads`, `notifications`, `storage`
-- Content scripts: Runs `content.js` on all URLs
-- Uses Manifest V3 (service worker, not background page)
+**`manifest.json`** — Configuration
+- Manifest V3 (service worker)
+- Permissions: `downloads`, `storage`
+- Host permissions: `http://*/*`, `https://*/*` (for the content script)
 
 ---
 
-## Storage Strategy: `chrome.storage.session`
+## Cross-cutting Invariants
 
-### Why Session Storage?
+These rules cut across files and are easy to break accidentally.
 
-We use `chrome.storage.session` for storing pending downloads instead of `chrome.storage.local`. Here's why:
+### 1. Session storage only, never local
 
-**`chrome.storage.session` advantages:**
-- ✅ **Auto-clears on browser close** - No stale data left behind
-- ✅ **Perfect for temporary data** - Pending downloads are short-lived
-- ✅ **Prevents lingering popups** - Solves the "popup opens on restart" issue
-- ✅ **Extension-native lifecycle** - Clears when extension unloads
+`pendingDownload` and `browserDownloadUrls` both live in `chrome.storage.session`, never in `chrome.storage.local`. Session storage auto-clears on browser close, which prevents a stale popup from appearing the next time the browser starts.
 
-**The Problem We Fixed:**
-```
-Before: Browser closes with unsent download → Browser reopens → Popup appears (data lingered)
-After:  Browser closes with unsent download → Browser reopens → No popup (session data cleared)
-```
+### 2. The re-entry guard is URL-based and lives in storage
 
-### How It Works
+When the popup's "Browser Download" button is clicked, background must:
+1. Add the URLs to `chrome.storage.session` under `browserDownloadUrls` **first**
+2. Only then call `chrome.downloads.download()`
 
-1. **Download detected** → Store in `chrome.storage.session` with timestamp
-   ```javascript
-   await chrome.storage.session.set({
-     pendingDownload: {
-       urls: validLinks,
-       protocolUrl: protocolUrl,
-       timestamp: Date.now()
-     }
-   });
-   ```
+If the guard were in memory only, the service worker could be killed between step 2 and the eventual `onCreated` event, losing the guard and causing the extension to intercept its own download in an infinite loop.
 
-2. **Popup opens** → Check age of pending download
-   ```javascript
-   const age = Date.now() - data.timestamp;
-   if (age > 5 * 60 * 1000) {
-     // Older than 5 minutes, close and cleanup
-     cleanupPendingDownload();
-     window.close();
-   }
-   ```
+If the guard were keyed by download ID, the `onCreated` event might fire before `download()`'s callback returns the ID — another race.
 
-3. **User closes popup** → Cleanup immediately
-   ```javascript
-   window.addEventListener('beforeunload', () => {
-     if (!actionCompleted) {
-       chrome.storage.session.remove(['pendingDownload']);
-     }
-   });
-   ```
+### 3. The `onCreated` listener stays `async`
 
-4. **No action for 5 minutes** → Auto-close and cleanup
-   ```javascript
-   setTimeout(() => {
-     if (!actionCompleted) {
-       cleanupPendingDownload();
-       window.close();
-     }
-   }, 5 * 60 * 1000);
-   ```
+It awaits the message round-trip to the content script for Alt key state. Don't make it synchronous.
 
-5. **Browser closes** → Session storage auto-clears
-   - Chrome automatically clears all session storage
+### 4. Alt-only modifier for bypass
 
-### Migration from `chrome.storage.local`
+`event.altKey && !event.metaKey && !event.shiftKey && !event.ctrlKey`. Cmd/Shift/Ctrl all conflict with browser link defaults on macOS (open in new tab, open in new window, etc.).
 
-If updating from an older version, no migration needed because:
-- Old `local` storage data won't be read (we only check `session`)
-- Session storage is completely separate
-- Eventually old data will be ignored naturally
+### 5. The popup click on `downloadshuttle://` must be a real user click
+
+Browsers forbid extensions from navigating to a custom-protocol URL programmatically. The popup uses an `<a href="downloadshuttle://...">` element and lets the natural anchor click handle the protocol invocation.
+
+---
+
+## Storage Keys
+
+All keys live in `chrome.storage.session`.
+
+| Key | Type | Set by | Read by | Purpose |
+|-----|------|--------|---------|---------|
+| `pendingDownload` | `{ urls, protocolUrl, timestamp }` | background (before opening popup) | popup (on startup) | Pass the intercepted download to the popup |
+| `browserDownloadUrls` | `string[]` | background (before `chrome.downloads.download`) | background (in `onCreated`) | Re-entry guard — URLs we started ourselves and must not re-intercept |
 
 ---
 
 ## How the Protocol Handler Works
 
 ### Protocol Format
+
 ```
 downloadshuttle://add/<ENCODED_JSON_ARRAY>
 ```
 
 ### Example
+
 ```javascript
-// 1. Start with URL(s)
-const urls = ["https://example.com/file.zip"];
+const urls = ['https://example.com/file.zip'];
 
-// 2. Convert to JSON and encode
-const content = encodeURIComponent(JSON.stringify(urls));
-// Result: %5B%22https%3A%2F%2Fexample.com%2Ffile.zip%22%5D
+// JSON-encode, then URL-encode once.
+const payload = encodeURIComponent(JSON.stringify(urls));
+// payload === '%5B%22https%3A%2F%2Fexample.com%2Ffile.zip%22%5D'
 
-// 3. Create protocol URL
-const protocolUrl = `downloadshuttle://add/${content}`;
-// Result: downloadshuttle://add/%5B%22https%3A%2F%2Fexample.com%2Ffile.zip%22%5D
-
-// 4. Set as link href
+const protocolUrl = 'downloadshuttle://add/' + payload;
 link.href = protocolUrl;
-
-// 5. When user clicks the link, browser triggers Download Shuttle app
+// When the user clicks the link, the OS hands it to Download Shuttle.
 ```
 
-### Why User Click is Required
+### Why User Click Is Required
 
-**Browser security:** Extensions cannot trigger custom protocols automatically. User must click a link to:
-- Prevent malicious extensions from opening apps without permission
-- Give users control over external app launches
-- Follow same rules as regular web pages
+Browser security: extensions cannot trigger custom protocols programmatically. The only way to invoke `downloadshuttle://` is via a real user click on a link. We use an `<a>` element whose `href` we set before the click happens.
 
-**Our solution:** Use a real `<a href="...">` link that user clicks.
+---
+
+## Adding New File Types
+
+Edit [src/background.js](src/background.js):
+
+- `FILE_EXTENSIONS` — matched against the URL pathname (lowercased). Includes the leading dot, e.g. `'.zip'`.
+- `MIME_TYPES` — matched against `downloadItem.mime` (lowercased).
+
+A download is intercepted if **either** match succeeds.
+
+Avoid `application/octet-stream` — many servers use it as a generic fallback for unknown binaries, which would cause over-eager interception.
 
 ---
 
@@ -218,218 +187,123 @@ link.href = protocolUrl;
 
 ### Prerequisites
 - Chrome or Edge browser
-- Download Shuttle app installed
-- Text editor
+- Download Shuttle app installed (for end-to-end testing)
+- Any text editor
 
 ### Installation
 1. Clone the repository
 2. Open `chrome://extensions/`
-3. Enable "Developer mode"
-4. Click "Load unpacked"
-5. Select the extension folder
+3. Enable **Developer mode**
+4. Click **Load unpacked**
+5. Select the `src/` folder
 
 ### Making Changes
-1. Edit any file
+1. Edit any file in `src/`
 2. Go to `chrome://extensions/`
-3. Click reload icon on the extension
+3. Click the reload icon on the extension
 4. Test your changes
 
-**No build process needed!** Pure vanilla JS, no dependencies.
+**No build process needed.** Pure vanilla JS, no dependencies.
 
 ---
 
-## Testing
-
-### Manual Test Flow
-1. Find a test download (e.g., VLC: `https://get.videolan.org/vlc/3.0.21/macosx/vlc-3.0.21-arm64.dmg`)
-2. Click the link
-3. Popup should appear
-4. Click "Send to Download Shuttle"
-5. Download Shuttle should open
-
-### Debugging
+## Debugging
 
 **Background script console:**
-- Go to `chrome://extensions/`
-- Find extension → Click "service worker"
-- Console shows logs: `[Download Shuttle Link] ...`
+- `chrome://extensions/` → find the extension → click "service worker"
+- Logs are prefixed `[Download Shuttle Link] ...`
 
 **Popup console:**
-- When popup opens, right-click → Inspect
-- Console tab shows popup logs
+- Right-click the popup → Inspect
 
-**Test protocol manually:**
+**Test the protocol manually:**
 ```javascript
-// In browser console (F12)
+// In any page's DevTools console
 window.location.href = 'downloadshuttle://add/%5B%22https%3A%2F%2Fexample.com%2Ftest.zip%22%5D';
-// Should open Download Shuttle
 ```
 
 ### Common Issues
 
 | Issue | Cause | Fix |
 |-------|-------|-----|
-| CSP violation | Inline script | Move JS to external file |
-| Protocol not working | Double encoding | Check encoding (only once) |
-| Permission popup repeats | User didn't click "Always allow" | Click "Always allow" not "Allow" |
-| Downloads not intercepted | File type not in list | Add to `FILE_EXTENSIONS` array |
-| Popup appears after restart | Old data lingering in storage | Already fixed with session storage |
-| Popup doesn't auto-close | User didn't complete action | 5-min timeout + popup cleanup on close |
-
----
-
-## Code Style Guide
-
-### JavaScript
-```javascript
-// ✅ Use ES6+ features
-const urls = ['https://example.com/file.zip'];
-const shouldIntercept = url => FILE_EXTENSIONS.some(ext => url.endsWith(ext));
-
-// ✅ Add JSDoc comments
-/**
- * Check if URL should be intercepted based on file extension
- * @param {string} url - The download URL
- * @returns {boolean} True if should be intercepted
- */
-function shouldInterceptByExtension(url) {
-  // ...
-}
-
-// ✅ Descriptive variable names
-const browserDownloadIds = new Set();
-const FILE_EXTENSIONS = ['.zip', '.rar', '.7z'];
-
-// ✅ Console logs with prefix
-console.log('[Download Shuttle Link] Intercepting:', url);
-```
-
-### HTML/CSS
-- Use semantic HTML elements
-- Keep styles inline in popup.html (no external CSS needed for small popup)
-- Mobile-friendly responsive design
+| Protocol does nothing | Double encoding | Encode exactly once with `encodeURIComponent(JSON.stringify(urls))` |
+| Permission prompt every time | User clicked "Allow", not "Always allow" | Click "Always allow" |
+| Downloads not intercepted | File type missing | Add to `FILE_EXTENSIONS` or `MIME_TYPES` |
+| Extension intercepts the fallback download | Re-entry guard not set before `download()` | Always `await addBrowserDownloadUrls(urls)` before `chrome.downloads.download()` |
+| Popup reopens after browser restart | Stored in `chrome.storage.local` | Must be `chrome.storage.session` |
+| Content script errors after extension reload | Stale context on existing pages | Guard with `chrome.runtime?.id` before using chrome APIs |
 
 ---
 
 ## Key Design Decisions
 
-### Why Popup Window Instead of Tab?
+### Why a popup window instead of a tab?
 
-**Old design:** Opened a new tab
-**New design:** Opens a popup window
-**Reason:** Less disruptive, cleaner UX, auto-closes gracefully
+Less disruptive, cleaner UX, easy to auto-close. A tab would persist in the user's tab list until they noticed it.
 
-### Why Two Buttons?
+### Why two buttons?
 
-**Button 1:** Send to Download Shuttle (primary action)
-**Button 2:** Browser Download (fallback)
-**Reason:** If Download Shuttle isn't installed or doesn't work, user has an escape route
+The Download Shuttle protocol can fail silently — the app might not be installed, or the user might dismiss the OS permission prompt. The "Browser Download" button is the escape hatch.
 
-### Why chrome.storage.local?
+### Why `chrome.storage.session` over `chrome.storage.local`?
 
-**Need:** Pass download data from background to popup
-**Alternative:** URL hash (old method)
-**Choice:** Storage is cleaner, supports multiple URLs, no encoding issues
+`local` survives browser restarts. If the user closes the browser with an unhandled download, the popup would reopen on the next launch with stale data. `session` clears on browser close, which is exactly what we want for transient handoff data.
 
-### Why Track Browser Download IDs?
+### Why the re-entry guard tracks URLs (not download IDs) in storage (not memory)?
 
-**Problem:** When user clicks "Browser Download", the background script would intercept it again
-**Solution:** Store download IDs in `browserDownloadIds` Set, skip those in the interceptor
+Two failure modes the URL-in-storage approach avoids:
 
-### Why Use Async Listener for Downloads?
+1. **In-memory + ID:** `chrome.downloads.onCreated` may fire before `chrome.downloads.download`'s callback returns the new download ID. The guard wouldn't be in place yet, and we'd intercept our own download.
+2. **In-memory + URL:** Same race plus MV3 service workers get killed when idle (~30s). The Set would be lost on restart.
+
+URL-in-session-storage is set before `download()` is called and persists across worker restarts.
+
+### Why use an `async` listener for `onCreated`?
+
+We need to await the message round-trip to the content script for the Alt key state:
 
 ```javascript
-// ❌ Synchronous (old way)
-chrome.downloads.onCreated.addListener((downloadItem) => {
-  // Can't await storage operations
-});
-
-// ✅ Asynchronous (current way)
-chrome.downloads.onCreated.addListener(async (downloadItem) => {
-  const data = await chrome.storage.local.get(['bypassInterception']);
-  // Now we can check bypass state before intercepting
+chrome.downloads.onCreated.addListener(async function (downloadItem) {
+  const altPressed = await isAltKeyPressed();
+  // ...
 });
 ```
 
-**Reason:** Need to read bypass flag from storage before deciding to intercept. Async/await makes this clean and readable.
+A sync listener would have to make the intercept decision without knowing whether the user is holding Alt.
 
-### Why Content Script Can't Access chrome.storage Directly?
+### Why does the content script use messages instead of `chrome.storage` directly?
 
-**Manifest V3 restriction:** Content scripts run in isolated context
-**Solution:** Use message passing via `chrome.runtime.sendMessage()`
+The content script *can* access `chrome.storage`, but a write/read round-trip is too slow for the "is Alt currently held?" question. Direct messaging gives the background script the live state at the moment of decision.
 
-**Communication flow:**
-```javascript
-// content.js (isolated context)
-chrome.runtime.sendMessage({ action: 'setBypass', bypass: true });
+Note: content scripts share message-passing APIs with the extension, but they run in an isolated JS world from the page's own scripts.
 
-// background.js (extension context)
-chrome.runtime.onMessage.addListener((message) => {
-  chrome.storage.local.set({ bypassInterception: message.bypass });
-});
-```
+### Why Alt instead of Cmd/Shift/Ctrl for the bypass?
 
-### Why Alt Key Instead of Cmd/Shift?
+Tested on macOS Chrome:
 
-**Tested keyboard shortcuts:**
-- ❌ **Cmd + Click** → Opens link in new tab (conflicts)
-- ❌ **Shift + Click** → Opens link in new window (conflicts)
-- ❌ **Cmd + Alt + Click** → Opens in new tab (Cmd has priority)
-- ✅ **Alt + Click** → No browser default action (perfect!)
-
-**Implementation:** Check for Alt only with no other modifiers:
-```javascript
-if (event.altKey && !event.metaKey && !event.shiftKey && !event.ctrlKey)
-```
-
-### Why 2-Second Timeout for Bypass State?
-
-**Problem:** Bypass flag could stay active accidentally
-**Solution:** Only honor bypass if set within 2 seconds of download start
-
-```javascript
-const timeSinceClick = Date.now() - lastClickTime;
-if (bypassInterception && timeSinceClick < 2000) {
-  // Bypass is fresh, honor it
-}
-```
-
-**Prevents:** Stale bypass state from affecting unrelated downloads
-
-### Why Session Storage Over Local Storage?
-
-**Problem:** Pending downloads stored in `chrome.storage.local` could persist after browser restarts
-**Scenario:** User closes browser without handling download → Browser restarts → Old popup reappears
-
-**Solution:** Use `chrome.storage.session`
-- Automatically clears when browser closes
-- Cleared when extension reloads
-- Perfect for temporary data like pending downloads
-- Prevents stale data issues completely
-
-**Additional Safety Measures:**
-- Auto-cleanup after 5 minutes if user abandons popup
-- Cleanup on popup close (user clicks X or ESC)
-- Check timestamp on popup open - if older than 5 min, auto-close
+- **Cmd + Click** → opens in a new tab (conflict)
+- **Shift + Click** → opens in a new window (conflict)
+- **Ctrl + Click** → opens the context menu (conflict)
+- **Alt + Click** → no default browser action (clean)
 
 ---
 
 ## Contributing
 
-### How to Contribute
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/my-feature`
 3. Make your changes
-4. Test thoroughly (try multiple file types)
-5. Update documentation if needed
-6. Submit pull request
+4. Test thoroughly (try multiple file types, with and without Alt held, with and without the Shuttle app open)
+5. Update documentation if the user-facing behavior or invariants change
+6. Submit a pull request
 
 ### Bug Reports
+
 Include:
-- Browser version (Chrome/Edge)
-- Extension version
+- Browser (Chrome/Edge) version
+- Extension version (from `manifest.json`)
 - Steps to reproduce
-- Console logs (background + popup)
+- Background + popup console logs
 - Screenshot if applicable
 
 ---
@@ -437,34 +311,35 @@ Include:
 ## Security & Privacy
 
 ### Permissions Explained
+
 ```json
 {
-  "downloads":      // Monitor and cancel downloads
-  "notifications":  // Show error messages
-  "tabs":          // Open popup window
-  "scripting":     // Future use (currently unused)
-  "storage":       // Store pending downloads
+  "downloads":  // Monitor, cancel, and erase downloads
+  "storage"     // Pass pending downloads between background and popup
+                // (session-scoped — clears on browser close)
 }
 ```
 
+Plus host permissions on `http://*/*` and `https://*/*` so the content script can observe the Alt key on every page.
+
 ### No Data Collection
-- ❌ No external network requests
-- ❌ No tracking or analytics
-- ❌ No user data stored permanently
-- ✅ All processing is local
-- ✅ Only talks to Download Shuttle app via protocol
+
+- No external network requests
+- No tracking or analytics
+- No data persisted beyond the current browser session
+- All processing is local; only talks to Download Shuttle via the OS protocol handler
 
 ### How Users Can Verify
-1. Open `chrome://extensions/`
-2. Find extension → View source files
-3. Check Network tab (F12) - no external requests
-4. Review `manifest.json` permissions
+
+1. `chrome://extensions/` → find the extension → view source files
+2. DevTools Network tab — no outgoing requests
+3. Review `manifest.json` permissions
 
 ---
 
 ## License
 
-MIT License - See LICENSE file
+MIT License — see LICENSE file
 
 ---
 

@@ -24,193 +24,162 @@
 ```
 ผู้ใช้คลิกลิงก์ดาวน์โหลด
       ↓
-content.js (Content Script)
-  • ตรวจจับสถานะปุ่ม Alt
-  • ส่งสถานะข้ามไปยัง background
+เบราว์เซอร์เริ่มดาวน์โหลด
       ↓
-Browser Download Event
-      ↓
-background.js (Service Worker)
-  • ตรวจจับการดาวน์โหลด (async listener)
-  • ตรวจสอบสถานะข้ามจาก storage
-  • ถ้าข้าม → อนุญาตให้เบราว์เซอร์ดาวน์โหลด
-  • ถ้าไม่ข้าม → ตรวจสอบชนิดไฟล์
-      ↓
-[ถ้าถูกดักจับ]
-  • ยกเลิกการดาวน์โหลดของเบราว์เซอร์
-  • เปิดหน้าต่างป๊อปอัป
+background.js — chrome.downloads.onCreated (async)
+  1. URL นี้อยู่ในรายการ guard "browser download" ของเราหรือไม่? → ปล่อยผ่าน
+  2. ถาม content.js: "ตอนนี้กด Alt อยู่ไหม?" → ถ้ากด → ปล่อยผ่าน
+  3. นามสกุล URL หรือ MIME type ตรงกับที่ต้องดักไหม? → ถ้าไม่ → ปล่อยผ่าน
+  4. ถ้าตรง: cancel + erase การดาวน์โหลดของเบราว์เซอร์, เก็บข้อมูล pending
+     ลง chrome.storage.session แล้วเปิดป๊อปอัป
       ↓
 popup.html + popup.js
-  • แสดง URL ดาวน์โหลด
-  • สองปุ่ม: "ส่งไปแอป" | "ดาวน์โหลดผ่านเบราว์เซอร์"
-  • ผู้ใช้คลิกหนึ่งในนั้น
-      ↓
-ตัวเลือก 1: Download Shuttle    ตัวเลือก 2: ดาวน์โหลดผ่านเบราว์เซอร์
-  เรียก protocol handler            กลับไปใช้ดาวน์โหลดปกติ
-  downloadshuttle://add/URL         ใช้ chrome.downloads API
-      ↓
-แอป Download Shuttle
-  รับ URL และดาวน์โหลด
+  • อ่าน pending download จาก chrome.storage.session
+  • สองปุ่ม:
+      ตัวเลือก 1: "📥 Download Shuttle App"   ตัวเลือก 2: "🌐 Browser Download"
+      ↓                                       ↓
+  Trigger ลิงก์ downloadshuttle://         ส่ง message "browserDownload" ไป
+  ผ่านการคลิก <a> จริง OS จะส่ง URL       background. Background mark URLs
+  ให้แอป Download Shuttle                  ในรายการ guard ก่อน แล้วค่อยเรียก
+                                          chrome.downloads.download() — handler
+                                          onCreated จะเจอ URL ใน guard และ
+                                          ปล่อยผ่าน
 ```
 
 ## โครงสร้างโปรเจกต์
 
 ```
-Download Shuttle Link/
-├── manifest.json          # การตั้งค่าและสิทธิ์ของส่วนขยาย
-├── background.js          # Service worker (ตรวจสอบการดาวน์โหลด)
-├── content.js             # Content script (ติดตามสถานะคีย์บอร์ด)
-├── popup.html             # UI ของป๊อปอัป
-├── popup.js               # ตรรกะของป๊อปอัป
-├── icons/                 # ไอคอนส่วนขยาย
-├── README_TH.md           # เอกสารสำหรับผู้ใช้
-└── DEVELOPMENT_TH.md      # ไฟล์นี้
+DownloadShuttleLink-Chrome/
+├── src/
+│   ├── manifest.json     # การตั้งค่าและสิทธิ์ของส่วนขยาย
+│   ├── background.js     # Service worker (ดักจับการดาวน์โหลด)
+│   ├── content.js        # Content script (ติดตามสถานะปุ่ม Alt)
+│   ├── popup.html        # UI ของป๊อปอัป
+│   ├── popup.js          # ตรรกะของป๊อปอัป
+│   └── icons/            # ไอคอนส่วนขยาย
+├── README.md             # เอกสารผู้ใช้ (อังกฤษ)
+├── README_TH.md          # เอกสารผู้ใช้ (ไทย)
+├── DEVELOPMENT.md        # ไฟล์นี้ (อังกฤษ)
+├── DEVELOPMENT_TH.md     # ไฟล์นี้ (ไทย)
+└── privacy-policy.md     # นโยบายความเป็นส่วนตัว
 ```
+
+**โหลด unpacked:** ชี้ Chrome ไปที่โฟลเดอร์ `src/` (ไม่ใช่ root ของ repo) เพราะ manifest อยู่ใน `src/`
 
 ### คำอธิบายไฟล์สำคัญ
 
-**`background.js`** - Service Worker
-- รับฟังการดาวน์โหลดผ่าน `chrome.downloads.onCreated` (async listener)
-- ตรวจสอบสถานะข้ามจาก `chrome.storage.local` ก่อนดักจับ
-- ตรวจสอบว่าควรดักจับชนิดไฟล์หรือไม่ (จากนามสกุลหรือ MIME type)
-- ยกเลิกการดาวน์โหลดของเบราว์เซอร์ด้วย `chrome.downloads.cancel()`
-- เปิดหน้าต่างป๊อปอัปด้วย `chrome.windows.create()`
-- เก็บข้อมูลการดาวน์โหลดใน `chrome.storage.local`
-- จัดการข้อความจาก content script และ popup
+**`background.js`** — Service Worker
+- เป็นเจ้าของ listener `chrome.downloads.onCreated` (async)
+- ตัดสินใจว่าจะดักจับโดยดูจากนามสกุลของ pathname, MIME type, ปุ่ม Alt, และ re-entry guard
+- ยกเลิกการดาวน์โหลดเดิมด้วย `chrome.downloads.cancel`
+- เปิดหน้าต่างป๊อปอัปด้วย `chrome.windows.create`
+- รับ message `browserDownload` จาก popup
 
-**`content.js`** - Content Script
-- ทำงานบนทุกหน้าเพื่อติดตามสถานะคีย์บอร์ด
-- ตรวจจับการกดปุ่ม Alt (Option) และการปล่อย
-- ส่งสถานะข้ามไปยัง background ผ่าน `chrome.runtime.sendMessage()`
-- จับสถานะคีย์บอร์ดเมื่อคลิกเพื่อความแม่นยำ
-- ไม่สามารถเข้าถึง `chrome.storage` โดยตรง (ต้องใช้ messaging)
+**`content.js`** — Content Script
+- ทำงานบนทุกหน้าที่ `document_start`
+- ติดตามสถานะปุ่ม Alt (Option) ในตัวแปร module-level
+- ตอบ message `{ action: 'checkAltKey' }` จาก background
+- ใช้ `chrome.runtime?.id` guard เพราะ runtime อาจ invalidate เมื่อ extension reload ขณะที่หน้าเดิมยังเปิดอยู่
 
-**`popup.js`** - ตรรกะของป๊อปอัป
-- อ่านการดาวน์โหลดที่รอจาก storage
-- แสดง URL ดาวน์โหลดใน UI
-- จัดการสองปุ่ม:
-  - **ส่งไปยัง Download Shuttle:** สร้าง protocol URL ทริกเกอร์ผ่านแท็ก `<a>`
-  - **ดาวน์โหลดผ่านเบราว์เซอร์:** ส่งข้อความไปยัง background เพื่อดาวน์โหลดผ่านเบราว์เซอร์
+**`popup.js`** — ตรรกะของป๊อปอัป
+- อ่าน `pendingDownload` จาก `chrome.storage.session`
+- ปิดอัตโนมัติถ้า entry เก่าเกิน 5 นาที
+- ปิดอัตโนมัติทันทีถ้าไม่มี entry (หมายความว่า popup ถูก browser restore ตอน restart)
+- ผูกปุ่มสองอัน ปุ่มเริ่มเป็น `disabled` และเปิดใช้งานหลังจากโหลด storage เท่านั้น
 
-**`popup.html`** - UI
-- พื้นหลังแบบ gradient เรียบง่าย
-- แสดง URL ดาวน์โหลด
-- ปุ่มการกระทำสองปุ่ม
-- ปิดอัตโนมัติหลังสำเร็จ
+**`popup.html`** — UI
+- พื้นหลังแบบ gradient, inline styles
+- ปุ่มสองอัน เริ่มต้นด้วย `disabled`
+- ปุ่ม "Download Shuttle App" อยู่ใน `<a id="sendLink">` เพื่อให้การคลิก trigger custom protocol ได้
 
-**`manifest.json`** - การตั้งค่า
-- สิทธิ์: `downloads`, `notifications`, `storage`
-- Content scripts: รัน `content.js` บนทุก URL
-- ใช้ Manifest V3 (service worker ไม่ใช่ background page)
+**`manifest.json`** — การตั้งค่า
+- Manifest V3 (service worker)
+- Permissions: `downloads`, `storage`
+- Host permissions: `http://*/*`, `https://*/*` (สำหรับ content script)
 
 ---
 
-## กลยุทธ์ Storage: `chrome.storage.session`
+## Invariants ที่กระจายข้ามไฟล์
 
-### ทำไมใช้ Session Storage?
+กฎเหล่านี้กระจายข้ามไฟล์และง่ายที่จะพลาดโดยไม่ตั้งใจ
 
-เราใช้ `chrome.storage.session` ในการเก็บการดาวน์โหลดที่รอดำเนิน แทนที่จะใช้ `chrome.storage.local` เหตุผลคือ:
+### 1. ใช้ session storage เท่านั้น ห้ามใช้ local
 
-**ข้อดีของ `chrome.storage.session`:**
-- ✅ **ล้างข้อมูลอัตโนมัติเมื่อเบราว์เซอร์ปิด** - ไม่มีข้อมูลเก่าค้างอยู่
-- ✅ **เหมาะสำหรับข้อมูลชั่วคราว** - การดาวน์โหลดที่รอเป็นข้อมูลระยะสั้น
-- ✅ **ป้องกันป๊อปอัปค้าง** - แก้ปัญหาที่ "ป๊อปอัปเปิดเมื่อ restart browser"
-- ✅ **Lifecycle ของ extension** - ล้างเมื่อ extension ปิด
+ทั้ง `pendingDownload` และ `browserDownloadUrls` อยู่ใน `chrome.storage.session` ไม่ใช่ `chrome.storage.local` เพราะ session storage จะถูกล้างอัตโนมัติเมื่อปิด browser → ป้องกัน popup ค้างเปิดขึ้นมาในการเปิด browser ครั้งถัดไป
 
-**ปัญหาที่เราแก้ไข:**
-```
-ก่อน: เบราว์เซอร์ปิดโดยดาวน์โหลดยังไม่ส่ง → เบราว์เซอร์เปิดใหม่ → ป๊อปอัปเปิด (ข้อมูลค้าง)
-หลัง: เบราว์เซอร์ปิดโดยดาวน์โหลดยังไม่ส่ง → เบราว์เซอร์เปิดใหม่ → ไม่มีป๊อปอัป (session ล้างแล้ว)
-```
+### 2. Re-entry guard ใช้ URL และเก็บใน storage
 
-### วิธีการทำงาน
+เมื่อผู้ใช้กดปุ่ม "Browser Download" บน popup background ต้อง:
+1. เพิ่ม URLs เข้า `chrome.storage.session` ใต้คีย์ `browserDownloadUrls` **ก่อน**
+2. ค่อยเรียก `chrome.downloads.download()`
 
-1. **ตรวจสอบการดาวน์โหลด** → เก็บใน `chrome.storage.session` พร้อม timestamp
-   ```javascript
-   await chrome.storage.session.set({
-     pendingDownload: {
-       urls: validLinks,
-       protocolUrl: protocolUrl,
-       timestamp: Date.now()
-     }
-   });
-   ```
+ถ้า guard อยู่ใน memory อย่างเดียว → service worker อาจถูก kill ระหว่าง step 2 กับ `onCreated` event ที่จะเกิดในภายหลัง → guard หายไป → extension จะดักจับการดาวน์โหลดของตัวเอง → loop ไม่จบ
 
-2. **เปิดป๊อปอัป** → ตรวจสอบอายุของการดาวน์โหลดที่รอ
-   ```javascript
-   const age = Date.now() - data.timestamp;
-   if (age > 5 * 60 * 1000) {
-     // เก่าเกิน 5 นาที ปิดและล้าง
-     cleanupPendingDownload();
-     window.close();
-   }
-   ```
+ถ้า guard ใช้ download ID → `onCreated` event อาจ fire ก่อน callback ของ `download()` คืนค่า ID มา → race condition อีกแบบหนึ่ง
 
-3. **ผู้ใช้ปิดป๊อปอัป** → ล้างทันที
-   ```javascript
-   window.addEventListener('beforeunload', () => {
-     if (!actionCompleted) {
-       chrome.storage.session.remove(['pendingDownload']);
-     }
-   });
-   ```
+### 3. Listener `onCreated` ต้อง `async`
 
-4. **ไม่มีการกระทำเป็นเวลา 5 นาที** → ปิดและล้างอัตโนมัติ
-   ```javascript
-   setTimeout(() => {
-     if (!actionCompleted) {
-       cleanupPendingDownload();
-       window.close();
-     }
-   }, 5 * 60 * 1000);
-   ```
+มัน await message round-trip ไปยัง content script เพื่อขอสถานะปุ่ม Alt อย่าทำให้เป็น sync
 
-5. **เบราว์เซอร์ปิด** → Session storage ล้างอัตโนมัติ
-   - Chrome ล้าง session storage ทั้งหมดอัตโนมัติ
+### 4. ใช้ Alt อย่างเดียวสำหรับ bypass
 
-### การย้ายจาก `chrome.storage.local`
+`event.altKey && !event.metaKey && !event.shiftKey && !event.ctrlKey` เพราะ Cmd/Shift/Ctrl ขัดกับ default ของลิงก์บน macOS (เปิดแท็บใหม่, หน้าต่างใหม่ ฯลฯ)
 
-ถ้าอัปเดตจากเวอร์ชันเก่า ไม่ต้องย้ายข้อมูล เพราะ:
-- ข้อมูลเก่า `local` storage จะไม่ถูกอ่าน (เราตรวจสอบ `session` เท่านั้น)
-- Session storage แยกจาก local storage อย่างสิ้นเชิน
-- ข้อมูลเก่าจะถูกละเว้นตามธรรมชาติในที่สุด
+### 5. การคลิก `downloadshuttle://` บน popup ต้องเป็นคลิกของผู้ใช้จริง
+
+Browser ห้าม extension navigate ไป custom-protocol URL แบบ programmatic Popup ใช้ `<a href="downloadshuttle://...">` แล้วปล่อยให้การคลิก anchor ตามธรรมชาติเป็นตัวเรียก protocol
+
+---
+
+## Storage Keys
+
+ทั้งหมดอยู่ใน `chrome.storage.session`
+
+| Key | Type | Set โดย | Read โดย | จุดประสงค์ |
+|-----|------|---------|----------|-----------|
+| `pendingDownload` | `{ urls, protocolUrl, timestamp }` | background (ก่อนเปิด popup) | popup (ตอน startup) | ส่งข้อมูล download ที่ถูกดักจับมาให้ popup |
+| `browserDownloadUrls` | `string[]` | background (ก่อน `chrome.downloads.download`) | background (ใน `onCreated`) | Re-entry guard — URLs ที่เราเริ่มดาวน์โหลดเองและห้ามดักจับซ้ำ |
 
 ---
 
 ## วิธีการทำงานของ Protocol Handler
 
 ### รูปแบบ Protocol
+
 ```
 downloadshuttle://add/<ENCODED_JSON_ARRAY>
 ```
 
 ### ตัวอย่าง
+
 ```javascript
-// 1. เริ่มด้วย URL
-const urls = ["https://example.com/file.zip"];
+const urls = ['https://example.com/file.zip'];
 
-// 2. แปลงเป็น JSON และ encode
-const content = encodeURIComponent(JSON.stringify(urls));
-// ผลลัพธ์: %5B%22https%3A%2F%2Fexample.com%2Ffile.zip%22%5D
+// JSON-encode ก่อน แล้ว URL-encode 1 ครั้ง
+const payload = encodeURIComponent(JSON.stringify(urls));
+// payload === '%5B%22https%3A%2F%2Fexample.com%2Ffile.zip%22%5D'
 
-// 3. สร้าง protocol URL
-const protocolUrl = `downloadshuttle://add/${content}`;
-// ผลลัพธ์: downloadshuttle://add/%5B%22https%3A%2F%2Fexample.com%2Ffile.zip%22%5D
-
-// 4. ตั้งเป็น href ของลิงก์
+const protocolUrl = 'downloadshuttle://add/' + payload;
 link.href = protocolUrl;
-
-// 5. เมื่อผู้ใช้คลิกลิงก์ เบราว์เซอร์จะเรียกแอป Download Shuttle
+// เมื่อผู้ใช้คลิกลิงก์ OS จะส่งให้แอป Download Shuttle
 ```
 
 ### ทำไมต้องให้ผู้ใช้คลิก
 
-**ความปลอดภัยของเบราว์เซอร์:** ส่วนขยายไม่สามารถเรียก custom protocols อัตโนมัติได้ ผู้ใช้ต้องคลิกลิงก์เพื่อ:
-- ป้องกันส่วนขยายที่เป็นอันตรายจากการเปิดแอปโดยไม่ได้รับอนุญาต
-- ให้ผู้ใช้ควบคุมการเปิดแอปภายนอก
-- ปฏิบัติตามกฎเดียวกับหน้าเว็บทั่วไป
+ความปลอดภัยของ browser: extension เรียก custom protocol แบบ programmatic ไม่ได้ ทางเดียวที่จะเรียก `downloadshuttle://` ได้คือคลิกลิงก์จริง เราใช้ element `<a>` แล้วเซ็ต `href` ก่อนที่จะเกิดการคลิก
 
-**วิธีแก้ของเรา:** ใช้แท็ก `<a href="...">` จริงๆ ที่ผู้ใช้คลิก
+---
+
+## การเพิ่มชนิดไฟล์ใหม่
+
+แก้ไฟล์ [src/background.js](src/background.js):
+
+- `FILE_EXTENSIONS` — match กับ pathname ของ URL (lowercase) ใส่จุดนำหน้าด้วย เช่น `'.zip'`
+- `MIME_TYPES` — match กับ `downloadItem.mime` (lowercase)
+
+ถ้า **ตัวใดตัวหนึ่ง** match → ดักจับ
+
+หลีกเลี่ยง `application/octet-stream` เพราะ server หลายเจ้าใช้เป็น fallback สำหรับไฟล์ binary ที่ไม่รู้จัก → จะดักจับมั่วเกินไป
 
 ---
 
@@ -218,96 +187,51 @@ link.href = protocolUrl;
 
 ### ข้อกำหนดเบื้องต้น
 - เบราว์เซอร์ Chrome หรือ Edge
-- แอป Download Shuttle ติดตั้งแล้ว
-- โปรแกรมแก้ไขข้อความ
+- แอป Download Shuttle ติดตั้งแล้ว (สำหรับการทดสอบ end-to-end)
+- โปรแกรมแก้ไขข้อความใดก็ได้
 
 ### การติดตั้ง
 1. โคลนโปรเจกต์
 2. เปิด `chrome://extensions/`
-3. เปิด "โหมดผู้พัฒนา"
-4. คลิก "โหลดส่วนขยายที่แกะแล้ว"
-5. เลือกโฟลเดอร์ส่วนขยาย
+3. เปิด **โหมดผู้พัฒนา**
+4. คลิก **โหลดส่วนขยายที่แกะแล้ว**
+5. เลือกโฟลเดอร์ `src/`
 
 ### การทำการเปลี่ยนแปลง
-1. แก้ไขไฟล์ใดก็ได้
-2. ไปที่ `chrome://extensions/`
+1. แก้ไฟล์ใดก็ได้ใน `src/`
+2. ไป `chrome://extensions/`
 3. คลิกไอคอนรีโหลดที่ส่วนขยาย
-4. ทดสอบการเปลี่ยนแปลงของคุณ
+4. ทดสอบการเปลี่ยนแปลง
 
-**ไม่ต้อง build!** JavaScript แท้ ไม่มี dependencies
+**ไม่ต้อง build** เพราะเป็น vanilla JS ไม่มี dependencies
 
 ---
 
-## การทดสอบ
-
-### ขั้นตอนการทดสอบด้วยตนเอง
-1. หาลิงก์ทดสอบ (เช่น VLC: `https://get.videolan.org/vlc/3.0.21/macosx/vlc-3.0.21-arm64.dmg`)
-2. คลิกลิงก์
-3. ป๊อปอัปควรปรากฏ
-4. คลิก "ส่งไปยัง Download Shuttle"
-5. แอป Download Shuttle ควรเปิด
-
-### การ Debug
+## การ Debug
 
 **คอนโซลของ Background script:**
-- ไปที่ `chrome://extensions/`
-- หาส่วนขยาย → คลิก "service worker"
-- คอนโซลแสดงล็อก: `[Download Shuttle Link] ...`
+- `chrome://extensions/` → หาส่วนขยาย → คลิก "service worker"
+- ล็อกมี prefix `[Download Shuttle Link] ...`
 
 **คอนโซลของ Popup:**
-- เมื่อป๊อปอัปเปิด คลิกขวา → ตรวจสอบ
-- แท็บคอนโซลแสดงล็อกของป๊อปอัป
+- คลิกขวาที่ popup → Inspect
 
 **ทดสอบ protocol ด้วยตนเอง:**
 ```javascript
-// ในคอนโซลของเบราว์เซอร์ (F12)
+// ใน DevTools console ของหน้าใดก็ได้
 window.location.href = 'downloadshuttle://add/%5B%22https%3A%2F%2Fexample.com%2Ftest.zip%22%5D';
-// ควรเปิดแอป Download Shuttle
 ```
 
 ### ปัญหาที่พบบ่อย
 
 | ปัญหา | สาเหตุ | วิธีแก้ |
 |-------|-------|---------|
-| CSP violation | Inline script | ย้าย JS ไปยังไฟล์ภายนอก |
-| Protocol ไม่ทำงาน | Encode ซ้ำสองครั้ง | ตรวจสอบ encoding (ครั้งเดียวเท่านั้น) |
-| ป๊อปอัปขออนุญาตซ้ำๆ | ผู้ใช้ไม่คลิก "อนุญาตเสมอ" | คลิก "อนุญาตเสมอ" ไม่ใช่ "อนุญาต" |
-| การดาวน์โหลดไม่ถูกดักจับ | ชนิดไฟล์ไม่อยู่ในรายการ | เพิ่มเข้า array `FILE_EXTENSIONS` |
-| ป๊อปอัปปรากฏหลัง restart | ข้อมูลเก่าค้างใน storage | แล้วแก้แล้ว (ใช้ session storage) |
-| ป๊อปอัปไม่ปิดเอง | ผู้ใช้ไม่ได้ทำการกระทำ | รอ 5 นาที + ปิด popup เมื่อปิดหน้าต่าง |
-
----
-
-## แนวทางการเขียนโค้ด
-
-### JavaScript
-```javascript
-// ✅ ใช้ฟีเจอร์ ES6+
-const urls = ['https://example.com/file.zip'];
-const shouldIntercept = url => FILE_EXTENSIONS.some(ext => url.endsWith(ext));
-
-// ✅ เพิ่ม JSDoc comments
-/**
- * ตรวจสอบว่าควรดักจับ URL ตามนามสกุลไฟล์หรือไม่
- * @param {string} url - URL การดาวน์โหลด
- * @returns {boolean} True ถ้าควรดักจับ
- */
-function shouldInterceptByExtension(url) {
-  // ...
-}
-
-// ✅ ชื่อตัวแปรที่บอกความหมาย
-const browserDownloadIds = new Set();
-const FILE_EXTENSIONS = ['.zip', '.rar', '.7z'];
-
-// ✅ Console logs ที่มี prefix
-console.log('[Download Shuttle Link] Intercepting:', url);
-```
-
-### HTML/CSS
-- ใช้ HTML elements ตามความหมาย
-- เก็บ styles แบบ inline ใน popup.html (ไม่ต้องใช้ CSS ภายนอกสำหรับป๊อปอัปเล็กๆ)
-- การออกแบบ responsive ที่เหมาะกับมือถือ
+| Protocol ไม่ทำงาน | Encode ซ้ำสองครั้ง | Encode ครั้งเดียวด้วย `encodeURIComponent(JSON.stringify(urls))` |
+| ป๊อปอัปขออนุญาตทุกครั้ง | ผู้ใช้คลิก "Allow" ไม่ใช่ "Always allow" | คลิก "Always allow" |
+| การดาวน์โหลดไม่ถูกดักจับ | ชนิดไฟล์ไม่อยู่ในรายการ | เพิ่มเข้า `FILE_EXTENSIONS` หรือ `MIME_TYPES` |
+| Extension ดักจับ fallback download ตัวเอง | ไม่ได้ set guard ก่อน `download()` | ต้อง `await addBrowserDownloadUrls(urls)` ก่อน `chrome.downloads.download()` เสมอ |
+| ป๊อปอัปเปิดเองหลัง restart browser | เก็บใน `chrome.storage.local` | ต้องใช้ `chrome.storage.session` |
+| Content script error หลัง reload extension | Context ที่ค้างในหน้าเก่า | ใช้ `chrome.runtime?.id` guard ก่อนเรียก chrome API |
 
 ---
 
@@ -315,154 +239,107 @@ console.log('[Download Shuttle Link] Intercepting:', url);
 
 ### ทำไมใช้หน้าต่างป๊อปอัปแทนแท็บ?
 
-**การออกแบบเก่า:** เปิดแท็บใหม่
-**การออกแบบใหม่:** เปิดหน้าต่างป๊อปอัป
-**เหตุผล:** รบกวนน้อยกว่า UX ที่สะอาดกว่า ปิดอัตโนมัติได้ดี
+รบกวนน้อยกว่า, UX สะอาดกว่า, ปิดอัตโนมัติได้ง่าย ถ้าเป็นแท็บจะค้างอยู่ใน tab list จนกว่าผู้ใช้จะเห็น
 
 ### ทำไมมีสองปุ่ม?
 
-**ปุ่ม 1:** ส่งไปยัง Download Shuttle (การกระทำหลัก)
-**ปุ่ม 2:** ดาวน์โหลดผ่านเบราว์เซอร์ (ทางเลือกสำรอง)
-**เหตุผล:** ถ้าแอป Download Shuttle ไม่ได้ติดตั้งหรือไม่ทำงาน ผู้ใช้มีทางออก
+Protocol Download Shuttle อาจล้มเหลวเงียบๆ ได้ — แอปอาจไม่ติดตั้ง หรือผู้ใช้อาจ dismiss prompt ขออนุญาตของ OS ปุ่ม "Browser Download" เป็นทางหนีไฟ
 
-### ทำไมใช้ chrome.storage.local?
+### ทำไมใช้ `chrome.storage.session` แทน `chrome.storage.local`?
 
-**ความต้องการ:** ส่งข้อมูลการดาวน์โหลดจาก background ไปยัง popup
-**ทางเลือกอื่น:** URL hash (วิธีเก่า)
-**ตัวเลือก:** Storage สะอาดกว่า รองรับหลาย URL ไม่มีปัญหา encoding
+`local` คงอยู่ข้าม browser restart ถ้าผู้ใช้ปิด browser โดยไม่ได้จัดการ download ที่ค้าง → popup จะเปิดมาในการ launch ครั้งถัดไปพร้อมข้อมูลเก่า `session` ล้างเมื่อปิด browser ซึ่งตรงกับที่เราต้องการสำหรับ transient handoff data
 
-### ทำไมต้องใช้ Session Storage แทน Local Storage?
+### ทำไม re-entry guard เก็บ URLs (ไม่ใช่ download IDs) ใน storage (ไม่ใช่ memory)?
 
-**ปัญหา:** การดาวน์โหลดที่รอเก็บใน `chrome.storage.local` อาจคงอยู่หลังจากเบราว์เซอร์ restart
-**สถานการณ์:** ผู้ใช้ปิดเบราว์เซอร์โดยไม่ส่งการดาวน์โหลด → เบราว์เซอร์เปิดใหม่ → ป๊อปอัปเก่าปรากฏขึ้น
+มี 2 failure mode ที่วิธี URL-in-storage หลีกเลี่ยงได้:
 
-**วิธีแก้:** ใช้ `chrome.storage.session`
-- ล้างอัตโนมัติเมื่อเบราว์เซอร์ปิด
-- ล้างเมื่อ extension ถูกโหลดใหม่
-- เหมาะสำหรับข้อมูลชั่วคราวเช่นการดาวน์โหลดที่รอ
-- ป้องกันปัญหาข้อมูลเก่าอย่างสมบูรณ์
+1. **In-memory + ID:** `chrome.downloads.onCreated` อาจ fire ก่อน callback ของ `chrome.downloads.download` จะคืนค่า download ID มา → guard ยังไม่ทันถูก set → เราดักจับ download ของตัวเอง
+2. **In-memory + URL:** Race เดิม + MV3 service workers ถูก kill เมื่อ idle (~30 วินาที) → Set หายไปตอน restart
 
-**มาตรการความปลอดภัยเพิ่มเติม:**
-- ล้างอัตโนมัติหลัง 5 นาที ถ้าผู้ใช้ทิ้งป๊อปอัปไว้
-- ล้างเมื่อป๊อปอัปปิด (ผู้ใช้กด X หรือ ESC)
-- ตรวจสอบ timestamp เมื่อเปิดป๊อปอัป - ถ้าเก่าเกิน 5 นาที ปิดอัตโนมัติ
+URL-in-session-storage ถูก set ก่อนเรียก `download()` และอยู่รอด worker restart
 
-### ทำไมต้องติดตาม Browser Download IDs?
+### ทำไม `onCreated` ต้องเป็น `async`?
 
-**ปัญหา:** เมื่อผู้ใช้คลิก "ดาวน์โหลดผ่านเบราว์เซอร์" background script จะดักจับมันอีกครั้ง
-**วิธีแก้:** เก็บ download IDs ใน `browserDownloadIds` Set ข้ามไปในตัวดักจับ
-
-### ทำไมใช้ Async Listener สำหรับการดาวน์โหลด?
+ต้อง await message round-trip ไปยัง content script เพื่อขอสถานะปุ่ม Alt:
 
 ```javascript
-// ❌ แบบ Synchronous (วิธีเก่า)
-chrome.downloads.onCreated.addListener((downloadItem) => {
-  // ไม่สามารถ await การทำงานกับ storage
-});
-
-// ✅ แบบ Asynchronous (วิธีปัจจุบัน)
-chrome.downloads.onCreated.addListener(async (downloadItem) => {
-  const data = await chrome.storage.local.get(['bypassInterception']);
-  // ตอนนี้เราสามารถตรวจสอบสถานะข้ามก่อนดักจับ
+chrome.downloads.onCreated.addListener(async function (downloadItem) {
+  const altPressed = await isAltKeyPressed();
+  // ...
 });
 ```
 
-**เหตุผล:** ต้องอ่านสถานะข้ามจาก storage ก่อนตัดสินใจดักจับ async/await ทำให้สะอาดและอ่านง่าย
+ถ้าเป็น sync listener จะต้องตัดสินใจดักจับโดยไม่รู้ว่าผู้ใช้กด Alt อยู่ไหม
 
-### ทำไม Content Script ไม่สามารถเข้าถึง chrome.storage โดยตรง?
+### ทำไม content script ใช้ messaging แทนการเข้าถึง `chrome.storage` ตรงๆ?
 
-**ข้อจำกัดของ Manifest V3:** Content scripts ทำงานใน isolated context
-**วิธีแก้:** ใช้ message passing ผ่าน `chrome.runtime.sendMessage()`
+Content script *เข้าถึง* `chrome.storage` ได้ แต่ write/read round-trip ช้าเกินไปสำหรับคำถาม "Alt ตอนนี้กดอยู่ไหม?" Direct messaging ให้ background ได้สถานะ live ตอนตัดสินใจ
 
-**ขั้นตอนการสื่อสาร:**
-```javascript
-// content.js (isolated context)
-chrome.runtime.sendMessage({ action: 'setBypass', bypass: true });
+หมายเหตุ: content script ใช้ message-passing API ร่วมกับ extension ได้ แต่รันใน isolated JS world แยกจาก script ของหน้าเพจ
 
-// background.js (extension context)
-chrome.runtime.onMessage.addListener((message) => {
-  chrome.storage.local.set({ bypassInterception: message.bypass });
-});
-```
+### ทำไมใช้ Alt แทน Cmd/Shift/Ctrl สำหรับ bypass?
 
-### ทำไมใช้ปุ่ม Alt แทน Cmd/Shift?
+ทดสอบบน macOS Chrome:
 
-**ทดสอบ keyboard shortcuts:**
-- ❌ **Cmd + คลิก** → เปิดลิงก์ในแท็บใหม่ (ขัดแย้ง)
-- ❌ **Shift + คลิก** → เปิดลิงก์ในหน้าต่างใหม่ (ขัดแย้ง)
-- ❌ **Cmd + Alt + คลิก** → เปิดในแท็บใหม่ (Cmd มีความสำคัญกว่า)
-- ✅ **Alt + คลิก** → ไม่มีการกระทำเริ่มต้นของเบราว์เซอร์ (สมบูรณ์แบบ!)
-
-**การใช้งาน:** ตรวจสอบเฉพาะ Alt โดยไม่มี modifiers อื่น:
-```javascript
-if (event.altKey && !event.metaKey && !event.shiftKey && !event.ctrlKey)
-```
-
-### ทำไม Timeout 2 วินาทีสำหรับสถานะข้าม?
-
-**ปัญหา:** สถานะข้ามอาจยังทำงานอยู่โดยไม่ตั้งใจ
-**วิธีแก้:** ยอมรับการข้ามเฉพาะถ้าตั้งค่าไว้ภายใน 2 วินาทีก่อนเริ่มดาวน์โหลด
-
-```javascript
-const timeSinceClick = Date.now() - lastClickTime;
-if (bypassInterception && timeSinceClick < 2000) {
-  // การข้ามยังใหม่ ยอมรับมัน
-}
-```
-
-**ป้องกัน:** สถานะข้ามที่เก่าจากการส่งผลกระทบต่อการดาวน์โหลดที่ไม่เกี่ยวข้อง
+- **Cmd + คลิก** → เปิดแท็บใหม่ (ขัด)
+- **Shift + คลิก** → เปิดหน้าต่างใหม่ (ขัด)
+- **Ctrl + คลิก** → เปิด context menu (ขัด)
+- **Alt + คลิก** → ไม่มี default action (สะอาด)
 
 ---
 
 ## การมีส่วนร่วม
 
-### วิธีการมีส่วนร่วม
 1. Fork repository
 2. สร้าง feature branch: `git checkout -b feature/my-feature`
-3. ทำการเปลี่ยนแปลงของคุณ
-4. ทดสอบอย่างละเอียด (ลองหลายชนิดไฟล์)
-5. อัปเดตเอกสารถ้าจำเป็น
+3. แก้ไขโค้ด
+4. ทดสอบให้ละเอียด (หลายชนิดไฟล์, ทั้งกดและไม่กด Alt, ทั้งที่ Shuttle app เปิดและไม่เปิด)
+5. อัปเดตเอกสารถ้าพฤติกรรมที่ผู้ใช้เห็นหรือ invariants เปลี่ยน
 6. ส่ง pull request
 
 ### รายงานบั๊ก
-รวม:
-- เวอร์ชันของเบราว์เซอร์ (Chrome/Edge)
-- เวอร์ชันของส่วนขยาย
+
+ใส่ข้อมูลนี้:
+- เวอร์ชัน browser (Chrome/Edge)
+- เวอร์ชัน extension (จาก `manifest.json`)
 - ขั้นตอนการทำซ้ำ
-- Console logs (background + popup)
-- ภาพหน้าจอถ้ามี
+- Background + popup console logs
+- Screenshot ถ้ามี
 
 ---
 
 ## ความปลอดภัยและความเป็นส่วนตัว
 
-### คำอธิบายสิทธิ์
+### คำอธิบาย Permissions
+
 ```json
 {
-  "downloads":      // ตรวจสอบและยกเลิกการดาวน์โหลด
-  "notifications":  // แสดงข้อความแสดงข้อผิดพลาด
-  "storage":        // เก็บการดาวน์โหลดที่รออยู่
+  "downloads":  // ตรวจสอบ, ยกเลิก, และลบ downloads
+  "storage"     // ส่ง pending downloads ระหว่าง background และ popup
+                // (session-scoped — ล้างเมื่อปิด browser)
 }
 ```
 
-### ไม่มีการเก็บข้อมูล
-- ❌ ไม่มีคำขอเครือข่ายภายนอก
-- ❌ ไม่มีการติดตามหรือวิเคราะห์
-- ❌ ไม่มีข้อมูลผู้ใช้ถูกเก็บถาวร
-- ✅ การประมวลผลทั้งหมดอยู่ในเครื่อง
-- ✅ สื่อสารกับแอป Download Shuttle ผ่าน protocol เท่านั้น
+บวกกับ host permissions บน `http://*/*` และ `https://*/*` เพื่อให้ content script ฟังปุ่ม Alt บนทุกหน้า
 
-### วิธีที่ผู้ใช้สามารถตรวจสอบ
-1. เปิด `chrome://extensions/`
-2. หาส่วนขยาย → ดูไฟล์ซอร์ส
-3. เช็คแท็บ Network (F12) - ไม่มีคำขอภายนอก
-4. ตรวจสอบสิทธิ์ใน `manifest.json`
+### ไม่มีการเก็บข้อมูล
+
+- ไม่มี request ออกเครือข่าย
+- ไม่มี tracking หรือ analytics
+- ไม่มีข้อมูลคงอยู่นอก session ของ browser ปัจจุบัน
+- ประมวลผลทั้งหมดในเครื่อง คุยกับ Download Shuttle ผ่าน OS protocol handler เท่านั้น
+
+### ผู้ใช้ตรวจสอบได้อย่างไร
+
+1. `chrome://extensions/` → หา extension → ดูไฟล์ source
+2. DevTools Network tab — ไม่มี request ออก
+3. ดู permissions ใน `manifest.json`
 
 ---
 
 ## สัญญาอนุญาต
 
-MIT License - ดูไฟล์ LICENSE
+MIT License — ดูไฟล์ LICENSE
 
 ---
 
