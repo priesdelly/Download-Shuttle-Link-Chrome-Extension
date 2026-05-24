@@ -5,8 +5,16 @@
  * them to the Download Shuttle app via a custom protocol.
  */
 
-// Track downloads initiated by browser download button (should not be intercepted)
-const browserDownloadIds = new Set();
+// Storage key for the re-entry guard. We store URLs that the popup told us
+// to download natively, so the onCreated listener below knows to let them
+// through instead of intercepting them again.
+//
+// Why session storage (not an in-memory Set)?
+//   1. MV3 service workers can be killed when idle, which would lose an
+//      in-memory Set and cause the next "browser download" to be intercepted.
+//   2. We must write the guard BEFORE calling chrome.downloads.download, so
+//      onCreated never fires before the guard is in place.
+const BROWSER_URL_KEY = 'browserDownloadUrls';
 
 const FILE_EXTENSIONS = [
   '.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz',
@@ -20,7 +28,7 @@ const FILE_EXTENSIONS = [
 const MIME_TYPES = [
   'application/zip', 'application/x-zip-compressed', 'application/x-rar-compressed',
   'application/x-7z-compressed', 'application/x-tar', 'application/gzip',
-  'application/octet-stream', 'application/x-msdownload', 'application/x-apple-diskimage',
+  'application/x-msdownload', 'application/x-apple-diskimage',
   'application/pdf', 'application/vnd.ms-excel',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'application/vnd.ms-powerpoint',
@@ -29,52 +37,106 @@ const MIME_TYPES = [
   'audio/mpeg', 'audio/wav', 'audio/flac', 'audio/aac', 'audio/ogg'
 ];
 
+
+// ---------------------------------------------------------------------------
+// Re-entry guard helpers
+// ---------------------------------------------------------------------------
+
+async function addBrowserDownloadUrls(urls) {
+  const stored = await chrome.storage.session.get(BROWSER_URL_KEY);
+  const existing = stored[BROWSER_URL_KEY] || [];
+  const updated = existing.concat(urls);
+  await chrome.storage.session.set({ [BROWSER_URL_KEY]: updated });
+}
+
+async function takeBrowserDownloadUrl(url) {
+  const stored = await chrome.storage.session.get(BROWSER_URL_KEY);
+  const existing = stored[BROWSER_URL_KEY] || [];
+  const index = existing.indexOf(url);
+
+  if (index === -1) {
+    return false;
+  }
+
+  existing.splice(index, 1);
+  await chrome.storage.session.set({ [BROWSER_URL_KEY]: existing });
+  return true;
+}
+
+
+// ---------------------------------------------------------------------------
+// Interception decision
+// ---------------------------------------------------------------------------
+
+// Match against URL pathname only. Using endsWith on the full URL would fail
+// for query strings, e.g. signed CDN links like "file.zip?token=abc".
 function shouldInterceptByExtension(url) {
-  const urlLower = url.toLowerCase();
-  return FILE_EXTENSIONS.some(ext => urlLower.endsWith(ext));
+  let pathname;
+  try {
+    pathname = new URL(url).pathname.toLowerCase();
+  } catch (error) {
+    return false;
+  }
+
+  for (const extension of FILE_EXTENSIONS) {
+    if (pathname.endsWith(extension)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function shouldInterceptByMime(mimeType) {
-  if (!mimeType) return false;
+  if (!mimeType) {
+    return false;
+  }
   return MIME_TYPES.includes(mimeType.toLowerCase());
 }
 
-function isValidUrl(url) {
+// Service workers can't observe page keyboard events, so we ask the content
+// script of the active tab for the current Alt key state.
+async function isAltKeyPressed() {
   try {
-    const urlObj = new URL(url);
-    return urlObj.protocol === 'http:' || urlObj.protocol === 'https:';
-  } catch {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const activeTab = tabs[0];
+
+    if (!activeTab || !activeTab.id) {
+      return false;
+    }
+
+    const response = await chrome.tabs.sendMessage(activeTab.id, { action: 'checkAltKey' });
+    if (response && response.altKeyPressed) {
+      return true;
+    }
+    return false;
+  } catch (error) {
+    // Tab may not have our content script (e.g. chrome:// pages). Treat as "not pressed".
+    console.log('[Download Shuttle Link] Could not check Alt key:', error.message);
     return false;
   }
 }
 
-async function sendToDownloadShuttle(links) {
-  if (!links || links.length === 0) return;
 
-  const validLinks = links.filter(isValidUrl);
-  if (validLinks.length === 0) return;
+// ---------------------------------------------------------------------------
+// Popup window
+// ---------------------------------------------------------------------------
 
+async function showDownloadPopup(downloadUrl) {
   try {
-    const content = encodeURIComponent(JSON.stringify(validLinks));
-    const protocolUrl = `downloadshuttle://add/${content}`;
+    const urls = [ downloadUrl ];
+    const encodedPayload = encodeURIComponent(JSON.stringify(urls));
+    const protocolUrl = 'downloadshuttle://add/' + encodedPayload;
 
-    console.log('[Download Shuttle Link] Sending:', validLinks);
     console.log('[Download Shuttle Link] Protocol URL:', protocolUrl);
 
-    // Store download info for popup to access in session storage
-    // This will automatically be cleared when browser session ends
-    const timestamp = Date.now();
     await chrome.storage.session.set({
       pendingDownload: {
-        urls: validLinks,
+        urls: urls,
         protocolUrl: protocolUrl,
-        timestamp: timestamp
+        timestamp: Date.now()
       }
     });
 
-    console.log('[Download Shuttle Link] Stored in session storage (auto-clears on browser close)');
-
-    // Show popup window instead of new tab
     const popupUrl = chrome.runtime.getURL('popup.html');
     await chrome.windows.create({
       url: popupUrl,
@@ -83,108 +145,88 @@ async function sendToDownloadShuttle(links) {
       height: 460,
       focused: true
     });
-
-    // Auto-cleanup after 5 minutes as safety measure
-    // Session storage will also clear on browser close
-    setTimeout(async () => {
-      const result = await chrome.storage.session.get(['pendingDownload']);
-      if (result.pendingDownload && result.pendingDownload.timestamp === timestamp) {
-        console.log('[Download Shuttle Link] Cleaning up expired pending download');
-        await chrome.storage.session.remove(['pendingDownload']);
-      }
-    }, 300000); // 5 minutes
-
   } catch (error) {
-    console.error('[Download Shuttle Link] Error:', error);
-    chrome.notifications.create({
-      type: 'basic',
-      iconUrl: 'icons/icon48.png',
-      title: 'Download Shuttle Link Error',
-      message: 'Failed to open Download Shuttle popup'
-    });
+    console.error('[Download Shuttle Link] Error showing popup:', error);
   }
 }
 
-chrome.downloads.onCreated.addListener(async (downloadItem) => {
+
+// ---------------------------------------------------------------------------
+// Main: handle each new download
+// ---------------------------------------------------------------------------
+
+chrome.downloads.onCreated.addListener(async function (downloadItem) {
   console.log('[Download Shuttle Link] Download detected:', downloadItem.url);
   console.log('[Download Shuttle Link] MIME type:', downloadItem.mime);
 
-  // Check if this is a browser-initiated download (should not be intercepted)
-  if (browserDownloadIds.has(downloadItem.id)) {
-    console.log('[Download Shuttle Link] Browser download - allowing');
-    browserDownloadIds.delete(downloadItem.id); // Clean up
+  // Step 1: was this download started by our own popup's "Browser Download"
+  // fallback? If yes, let it through to avoid an infinite loop:
+  //   popup -> chrome.downloads.download() -> onCreated -> intercept -> popup -> ...
+  const isOurBrowserDownload = await takeBrowserDownloadUrl(downloadItem.url);
+  if (isOurBrowserDownload) {
+    console.log('[Download Shuttle Link] Own browser download - allowing');
     return;
   }
 
-  // Check if user is holding Alt (Option) key by asking active tab's content script
-  let altKeyPressed = false;
-  try {
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tabs[0]?.id) {
-      const response = await chrome.tabs.sendMessage(tabs[0].id, { action: 'checkAltKey' });
-      altKeyPressed = response?.altKeyPressed || false;
-      console.log('[Download Shuttle Link] Alt key check result:', altKeyPressed);
-    }
-  } catch (error) {
-    console.log('[Download Shuttle Link] Could not check Alt key (tab may not have content script)');
-  }
-
-  // Bypass interception if Alt key is pressed
-  if (altKeyPressed) {
+  // Step 2: user can hold Alt (Option) to bypass interception.
+  const altPressed = await isAltKeyPressed();
+  if (altPressed) {
     console.log('[Download Shuttle Link] Alt key held - bypassing interception');
     return;
   }
 
-  const shouldIntercept = shouldInterceptByExtension(downloadItem.url) ||
-                          shouldInterceptByMime(downloadItem.mime);
-
-  if (shouldIntercept) {
-    console.log('[Download Shuttle Link] Intercepting download');
-
-    chrome.downloads.cancel(downloadItem.id, () => {
-      chrome.downloads.erase({ id: downloadItem.id });
-    });
-
-    sendToDownloadShuttle([downloadItem.url]);
-  } else {
-    console.log('[Download Shuttle Link] Allowing browser download');
+  // Step 3: decide based on extension or MIME type.
+  const matchByExtension = shouldInterceptByExtension(downloadItem.url);
+  const matchByMime = shouldInterceptByMime(downloadItem.mime);
+  if (!matchByExtension && !matchByMime) {
+    console.log('[Download Shuttle Link] Not a supported type - allowing');
+    return;
   }
+
+  // Step 4: cancel the native download and show our popup.
+  console.log('[Download Shuttle Link] Intercepting download');
+  chrome.downloads.cancel(downloadItem.id, function () {
+    chrome.downloads.erase({ id: downloadItem.id });
+  });
+  await showDownloadPopup(downloadItem.url);
 });
 
-chrome.runtime.onInstalled.addListener((details) => {
-  console.log('[Download Shuttle Link] Extension installed/updated:', details.reason);
-});
 
-// Handle messages from popup
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // Handle browser download from popup
+// ---------------------------------------------------------------------------
+// Messages from the popup
+// ---------------------------------------------------------------------------
+
+async function handleBrowserDownloadRequest(urls) {
+  // Mark URLs BEFORE starting downloads, so the onCreated listener above
+  // will recognize them as ours even if it fires before download() returns.
+  await addBrowserDownloadUrls(urls);
+
+  for (const url of urls) {
+    chrome.downloads.download({
+      url: url,
+      saveAs: true
+    });
+  }
+}
+
+chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
+  // Reject messages from other extensions.
+  if (sender.id !== chrome.runtime.id) {
+    return false;
+  }
+
   if (message.action === 'browserDownload') {
-    console.log('[Download Shuttle Link] Starting browser downloads:', message.urls);
+    console.log('[Download Shuttle Link] Starting native browser downloads:', message.urls);
 
-    // Download each URL using browser's download API
-    message.urls.forEach(url => {
-      chrome.downloads.download({
-        url: url,
-        saveAs: true // Show save dialog for each file
-      }, (downloadId) => {
-        if (chrome.runtime.lastError) {
-          console.error('[Download Shuttle Link] Browser download error:', chrome.runtime.lastError);
-        } else {
-          console.log('[Download Shuttle Link] Browser download started:', downloadId);
-          // Mark this download ID as browser-initiated so it won't be intercepted
-          browserDownloadIds.add(downloadId);
-
-          // Clean up after 30 seconds in case something goes wrong
-          setTimeout(() => {
-            browserDownloadIds.delete(downloadId);
-          }, 30000);
-        }
-      });
+    handleBrowserDownloadRequest(message.urls).then(function () {
+      sendResponse({ success: true });
     });
 
-    sendResponse({ success: true });
-    return true; // Keep message channel open for async response
+    // Return true to keep the message channel open for the async sendResponse above.
+    return true;
   }
+
+  return false;
 });
 
 console.log('[Download Shuttle Link] Background script loaded');

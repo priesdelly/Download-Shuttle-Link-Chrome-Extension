@@ -18,7 +18,7 @@ A Chrome/Edge extension that sends your downloads to the [Download Shuttle](http
 **Simple flow:**
 1. You click a download link
 2. Extension intercepts it and shows a popup
-3. You click "Send to Download Shuttle"
+3. You click "📥 Download Shuttle App"
 4. Download Shuttle opens and starts downloading
 
 **First time setup:** Your browser will ask permission to open Download Shuttle. Click "Always allow" for seamless future downloads.
@@ -42,7 +42,7 @@ A Chrome/Edge extension that sends your downloads to the [Download Shuttle](http
 ### Normal Download (via Download Shuttle)
 1. Click any download link for a supported file type
 2. A popup appears with download details
-3. Click **"📥 Send to Download Shuttle"**
+3. Click **"📥 Download Shuttle App"**
 4. Download Shuttle opens and starts downloading
 
 ### Bypass Interception (Direct Browser Download)
@@ -51,7 +51,7 @@ A Chrome/Edge extension that sends your downloads to the [Download Shuttle](http
 - **Alt + Click** = Direct browser download (no popup)
 - **Normal Click** = Shows popup to send to Download Shuttle
 
-**Fallback:** If Download Shuttle doesn't open, click **"Browser Download"** button in the popup to download normally.
+**Fallback:** If Download Shuttle doesn't open, click the **"🌐 Browser Download"** button in the popup to download normally.
 
 ## Supported File Types
 
@@ -97,7 +97,7 @@ Want to understand how it works or contribute? See [DEVELOPMENT.md](DEVELOPMENT.
 
 ⚠️ **Unofficial extension** - Not affiliated with FIPLAB Ltd. (creators of Download Shuttle)
 
-⚠️ This project contains a significant amount of code written using the **Vibe coding** methodology
+⚠️ Roughly **80% of this project was vibe-coded** with **Claude Opus 4.7** (Anthropic). The remaining ~20% is hand-written review, integration, and manual testing.
 
 ## License
 
