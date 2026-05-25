@@ -173,6 +173,13 @@ chrome.downloads.onCreated.addListener(async function (downloadItem) {
     return;
   }
 
+  // On Chrome startup the service worker may receive onCreated for items
+  // already in the download history (completed or interrupted). Only act on
+  // downloads that are genuinely starting right now.
+  if (downloadItem.state !== 'in_progress') {
+    return;
+  }
+
   console.log('[Download Shuttle Link] Download detected:', downloadItem.url);
   console.log('[Download Shuttle Link] MIME type:', downloadItem.mime);
 
