@@ -16,6 +16,19 @@
 //      onCreated never fires before the guard is in place.
 const BROWSER_URL_KEY = 'browserDownloadUrls';
 
+// Download Shuttle is macOS-only. On other platforms, stay completely passive:
+// don't intercept downloads, don't show the popup. Cached after first lookup
+// because chrome.runtime.getPlatformInfo is async and onCreated needs a sync
+// decision path.
+let isMacOS = null;
+async function checkIsMacOS() {
+  if (isMacOS === null) {
+    const info = await chrome.runtime.getPlatformInfo();
+    isMacOS = info.os === 'mac';
+  }
+  return isMacOS;
+}
+
 const FILE_EXTENSIONS = [
   '.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz',
   '.exe', '.msi', '.dmg', '.pkg', '.deb', '.rpm', '.apk', '.ipa',
@@ -156,6 +169,10 @@ async function showDownloadPopup(downloadUrl) {
 // ---------------------------------------------------------------------------
 
 chrome.downloads.onCreated.addListener(async function (downloadItem) {
+  if (!(await checkIsMacOS())) {
+    return;
+  }
+
   console.log('[Download Shuttle Link] Download detected:', downloadItem.url);
   console.log('[Download Shuttle Link] MIME type:', downloadItem.mime);
 
