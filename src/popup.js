@@ -44,12 +44,17 @@ function cleanupPendingDownload() {
 // ---------------------------------------------------------------------------
 
 function startup() {
+  // Atomically consume the pending download: read it and immediately delete it.
+  // This makes the popup idempotent — if Chrome restores this popup window on
+  // restart, the second load finds nothing and closes itself instead of
+  // re-rendering a stale URL.
   chrome.storage.session.get([ 'pendingDownload' ], function (result) {
     const data = result.pendingDownload;
+    chrome.storage.session.remove([ 'pendingDownload' ]);
 
     // No pending download means this popup was restored by the browser on
-    // restart (session storage was cleared). Close it instead of showing an
-    // empty UI.
+    // restart, or another popup already consumed it. Close it instead of
+    // showing an empty UI.
     if (!data) {
       actionCompleted = true;
       window.close();
