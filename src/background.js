@@ -6,20 +6,20 @@
  */
 
 // Storage key for the re-entry guard. We store URLs that the popup told us
-// to download natively, so the onCreated listener below knows to let them
+// to download natively, so the download listener below knows to let them
 // through instead of intercepting them again.
 //
 // Why session storage (not an in-memory Set)?
 //   1. MV3 service workers can be killed when idle, which would lose an
 //      in-memory Set and cause the next "browser download" to be intercepted.
 //   2. We must write the guard BEFORE calling chrome.downloads.download, so
-//      onCreated never fires before the guard is in place.
+//      the listener never fires before the guard is in place.
 const BROWSER_URL_KEY = 'browserDownloadUrls';
 
 // Download Shuttle is macOS-only. On other platforms, stay completely passive:
 // don't intercept downloads, don't show the popup. Cached after first lookup
-// because chrome.runtime.getPlatformInfo is async and onCreated needs a sync
-// decision path.
+// because chrome.runtime.getPlatformInfo is async and the download listener
+// needs a sync decision path.
 let isMacOS = null;
 async function checkIsMacOS() {
   if (isMacOS === null) {
@@ -168,52 +168,96 @@ async function showDownloadPopup(downloadUrl) {
 // Main: handle each new download
 // ---------------------------------------------------------------------------
 
-chrome.downloads.onCreated.addListener(async function (downloadItem) {
-  if (!(await checkIsMacOS())) {
-    return;
-  }
+// No-op callback that consumes chrome.runtime.lastError to prevent
+// "Unchecked runtime.lastError" warnings on benign races (e.g. download already
+// completed before our cancel/pause/resume runs). Pattern borrowed from IDM
+// Integration Module — proven across many Chromium versions.
+function consumeLastError() {
+  void chrome.runtime.lastError;
+}
 
-  // On Chrome startup the service worker may receive onCreated for items
-  // already in the download history (completed or interrupted). Only act on
-  // downloads that are genuinely starting right now.
-  if (downloadItem.state !== 'in_progress') {
-    return;
-  }
+// Pattern (from IDM Integration Module):
+//   1. onCreated: pause immediately + start async decision.
+//   2. onDeterminingFilename: if still deciding, return true (defer the dialog)
+//      and stash the suggest() callback for later. This prevents the native
+//      "Save As" dialog on browsers configured to ask where to save.
+//   3. Decision made → either cancel (intercept, suggest is moot) or
+//      call stashed suggest() + resume (let through).
+//
+// Tracks downloads we're holding for an async decision.
+// Map<downloadId, { suggest: function|null }>
+const heldDownloads = new Map();
 
-  console.log('[Download Shuttle Link] Download detected:', downloadItem.url);
-  console.log('[Download Shuttle Link] MIME type:', downloadItem.mime);
+chrome.downloads.onCreated.addListener(function (downloadItem) {
+  if (downloadItem.state !== 'in_progress') return;
+  if (isMacOS === false) return;
 
-  // Step 1: was this download started by our own popup's "Browser Download"
-  // fallback? If yes, let it through to avoid an infinite loop:
-  //   popup -> chrome.downloads.download() -> onCreated -> intercept -> popup -> ...
-  const isOurBrowserDownload = await takeBrowserDownloadUrl(downloadItem.url);
-  if (isOurBrowserDownload) {
-    console.log('[Download Shuttle Link] Own browser download - allowing');
-    return;
-  }
-
-  // Step 2: user can hold Alt (Option) to bypass interception.
-  const altPressed = await isAltKeyPressed();
-  if (altPressed) {
-    console.log('[Download Shuttle Link] Alt key held - bypassing interception');
-    return;
-  }
-
-  // Step 3: decide based on extension or MIME type.
   const matchByExtension = shouldInterceptByExtension(downloadItem.url);
   const matchByMime = shouldInterceptByMime(downloadItem.mime);
-  if (!matchByExtension && !matchByMime) {
-    console.log('[Download Shuttle Link] Not a supported type - allowing');
-    return;
-  }
+  if (!matchByExtension && !matchByMime) return;
 
-  // Step 4: cancel the native download and show our popup.
-  console.log('[Download Shuttle Link] Intercepting download');
-  chrome.downloads.cancel(downloadItem.id, function () {
-    chrome.downloads.erase({ id: downloadItem.id });
-  });
-  await showDownloadPopup(downloadItem.url);
+  heldDownloads.set(downloadItem.id, { suggest: null });
+  chrome.downloads.pause(downloadItem.id, consumeLastError);
+  decideDownload(downloadItem);
 });
+
+// Defers Chrome's "Save As" dialog while we make the async decision. By the
+// time this fires, decideDownload either has the entry tracked (pending) or
+// has already removed it (decided + acted). Sync execution of releaseHeld/
+// cancel means there's no in-between state to handle here.
+chrome.downloads.onDeterminingFilename.addListener(function (downloadItem, suggest) {
+  const held = heldDownloads.get(downloadItem.id);
+  if (!held) return;
+
+  // Pending: defer dialog and stash suggest for decideDownload to call.
+  held.suggest = suggest;
+  return true;
+});
+
+function releaseHeld(downloadId, held) {
+  if (held.suggest) held.suggest();
+  heldDownloads.delete(downloadId);
+  chrome.downloads.resume(downloadId, consumeLastError);
+}
+
+async function decideDownload(downloadItem) {
+  const held = heldDownloads.get(downloadItem.id);
+  if (!held) return;
+
+  try {
+    if (!(await checkIsMacOS())) {
+      releaseHeld(downloadItem.id, held);
+      return;
+    }
+
+    // Re-entry guard: own browser-download fallback must pass through to
+    // avoid loop: popup -> chrome.downloads.download() -> intercept -> popup.
+    if (await takeBrowserDownloadUrl(downloadItem.url)) {
+      console.log('[Download Shuttle Link] Own browser download - allowing');
+      releaseHeld(downloadItem.id, held);
+      return;
+    }
+
+    if (await isAltKeyPressed()) {
+      console.log('[Download Shuttle Link] Alt key held - bypassing interception');
+      releaseHeld(downloadItem.id, held);
+      return;
+    }
+
+    console.log('[Download Shuttle Link] Intercepting download:', downloadItem.url);
+    chrome.downloads.cancel(downloadItem.id, function () {
+      void chrome.runtime.lastError;
+      chrome.downloads.erase({ id: downloadItem.id }, consumeLastError);
+    });
+    // suggest() is intentionally NOT called — cancel kills the download, so
+    // the deferred listener has nothing to release.
+    heldDownloads.delete(downloadItem.id);
+    await showDownloadPopup(downloadItem.url);
+  } catch (e) {
+    console.error('[Download Shuttle Link] decideDownload error:', e);
+    releaseHeld(downloadItem.id, held);
+  }
+}
 
 
 // ---------------------------------------------------------------------------
@@ -221,7 +265,7 @@ chrome.downloads.onCreated.addListener(async function (downloadItem) {
 // ---------------------------------------------------------------------------
 
 async function handleBrowserDownloadRequest(urls) {
-  // Mark URLs BEFORE starting downloads, so the onCreated listener above
+  // Mark URLs BEFORE starting downloads, so the download listener above
   // will recognize them as ours even if it fires before download() returns.
   await addBrowserDownloadUrls(urls);
 
@@ -252,5 +296,9 @@ chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
 
   return false;
 });
+
+// Warm the isMacOS cache so the sync gate in onDeterminingFilename works on
+// the very first download (before any async check has a chance to run).
+checkIsMacOS();
 
 console.log('[Download Shuttle Link] Background script loaded');

@@ -26,24 +26,43 @@
       ↓
 เบราว์เซอร์เริ่มดาวน์โหลด
       ↓
-background.js — chrome.downloads.onCreated (async)
-  1. URL นี้อยู่ในรายการ guard "browser download" ของเราหรือไม่? → ปล่อยผ่าน
-  2. ถาม content.js: "ตอนนี้กด Alt อยู่ไหม?" → ถ้ากด → ปล่อยผ่าน
-  3. นามสกุล URL หรือ MIME type ตรงกับที่ต้องดักไหม? → ถ้าไม่ → ปล่อยผ่าน
-  4. ถ้าตรง: cancel + erase การดาวน์โหลดของเบราว์เซอร์, เก็บข้อมูล pending
-     ลง chrome.storage.session แล้วเปิดป๊อปอัป
+background.js — chrome.downloads.onCreated
+  1. Sync gates: state เป็น in_progress? macOS? extension/MIME ตรงไหม?
+  2. chrome.downloads.pause()  ← pause ทันที
+  3. Track ลงใน heldDownloads Map แล้วเรียก decideDownload() แบบ async
       ↓
-popup.html + popup.js
-  • อ่าน pending download จาก chrome.storage.session
-  • สองปุ่ม:
-      ตัวเลือก 1: "📥 Download Shuttle App"   ตัวเลือก 2: "🌐 Browser Download"
-      ↓                                       ↓
-  Trigger ลิงก์ downloadshuttle://         ส่ง message "browserDownload" ไป
-  ผ่านการคลิก <a> จริง OS จะส่ง URL       background. Background mark URLs
-  ให้แอป Download Shuttle                  ในรายการ guard ก่อน แล้วค่อยเรียก
-                                          chrome.downloads.download() — handler
-                                          onCreated จะเจอ URL ใน guard และ
-                                          ปล่อยผ่าน
+background.js — chrome.downloads.onDeterminingFilename
+  • ถ้า download นี้ถูก track อยู่ (ยังตัดสินใจไม่เสร็จ):
+      เก็บ callback suggest() ไว้แล้ว return true
+      → defer dialog "Save As" ของ Chrome
+      ↓
+background.js — decideDownload() (async)
+  1. เช็ค macOS (กัน race ตอนที่ cache เป็น null)
+  2. Re-entry guard (URL อยู่ใน browserDownloadUrls?) → release
+  3. กด Alt อยู่ไหม? → release
+  4. ไม่ตรงทั้งหมด → intercept
+      ↓
+              ┌──── release ────┐         ┌──── intercept ────┐
+              │ เรียก suggest() │         │ cancel + erase    │
+              │ ที่เก็บไว้ แล้ว    │         │ (ไม่เรียก suggest  │
+              │ resume()        │         │  เพราะ download    │
+              │                 │         │  ถูกฆ่าทิ้ง)         │
+              └─────────────────┘         │ เปิด popup        │
+                                          └───────────────────┘
+                                                  ↓
+                                          popup.html + popup.js
+                                          อ่าน pendingDownload จาก
+                                          chrome.storage.session
+                                          สองปุ่ม:
+                                            ตัวเลือก 1: "📥 Download Shuttle App"
+                                            ตัวเลือก 2: "🌐 Browser Download"
+                                              ↓                          ↓
+                                          <a href="downloadshuttle:    ส่ง message "browserDownload"
+                                          //..."> คลิกของผู้ใช้จริง       ไป background. Background
+                                          OS ส่ง URL ให้แอป             เพิ่ม URLs ใน browserDownloadUrls
+                                          Download Shuttle              **ก่อน** แล้วค่อยเรียก
+                                                                        chrome.downloads.download() —
+                                                                        re-entry guard ปล่อยผ่าน
 ```
 
 ## โครงสร้างโปรเจกต์
@@ -69,10 +88,13 @@ DownloadShuttleLink-Chrome/
 ### คำอธิบายไฟล์สำคัญ
 
 **`background.js`** — Service Worker
-- เป็นเจ้าของ listener `chrome.downloads.onCreated` (async)
-- ตัดสินใจว่าจะดักจับโดยดูจากนามสกุลของ pathname, MIME type, ปุ่ม Alt, และ re-entry guard
-- ยกเลิกการดาวน์โหลดเดิมด้วย `chrome.downloads.cancel`
-- เปิดหน้าต่างป๊อปอัปด้วย `chrome.windows.create`
+- ใช้ listener สองตัวร่วมกัน:
+  - `chrome.downloads.onCreated` — ผ่าน sync gates แล้ว `chrome.downloads.pause()` และเริ่ม `decideDownload()` แบบ async
+  - `chrome.downloads.onDeterminingFilename` — defer dialog "Save As" ของ Chrome โดย return `true` และเก็บ `suggest` ไว้
+- `decideDownload()` ตัดสินใจว่าจะดักจับโดยดูจาก macOS check, นามสกุลของ pathname, MIME type, ปุ่ม Alt, และ re-entry guard
+- ถ้าดักจับ: `chrome.downloads.cancel` + `erase` + เปิด popup ด้วย `chrome.windows.create`
+- ถ้าปล่อย: เรียก `suggest()` ที่เก็บไว้แล้ว `chrome.downloads.resume`
+- ทุก callback ของ `chrome.downloads.*` ใช้ `consumeLastError` เพื่อป้องกัน "Unchecked runtime.lastError" warning จาก race ทั่วไป
 - รับ message `browserDownload` จาก popup
 
 **`content.js`** — Content Script
@@ -117,15 +139,33 @@ DownloadShuttleLink-Chrome/
 
 ถ้า guard ใช้ download ID → `onCreated` event อาจ fire ก่อน callback ของ `download()` คืนค่า ID มา → race condition อีกแบบหนึ่ง
 
-### 3. Listener `onCreated` ต้อง `async`
+### 3. Pause ก่อนใน `onCreated` แล้วค่อยตัดสินใจแบบ async
 
-มัน await message round-trip ไปยัง content script เพื่อขอสถานะปุ่ม Alt อย่าทำให้เป็น sync
+ต้อง `chrome.downloads.pause()` ทันทีใน `onCreated` listener — แบบ sync ก่อนทุก await การ pause ทันทีตอนสร้าง download ทำงานเชื่อถือได้สูง และการ cancel กับ download ที่ paused อยู่ก็เชื่อถือได้เช่นกัน ฟังก์ชัน async `decideDownload()` จะทำงานต่อใน background แล้วเลือก cancel (intercept) หรือ resume (release)
 
-### 4. ใช้ Alt อย่างเดียวสำหรับ bypass
+อย่าย้าย cancel ไปไว้ใน sync path ของ `onCreated` — มันต้องเกิดหลังจากตัดสินใจแบบ async แล้ว
+
+### 4. Defer dialog "Save As" ผ่าน `onDeterminingFilename`
+
+Browser ที่ตั้งค่า "Ask where to save each file before downloading" จะแสดง dialog Save As ระหว่างขั้นตอน determining filename เพื่อกัน dialog ตอนดักจับ:
+
+1. ใน `onDeterminingFilename` ค้นหา download ใน `heldDownloads` ถ้าเจอ (ยังตัดสินใจไม่เสร็จ) ให้เก็บ callback `suggest` ไว้บน entry แล้ว `return true` — จะ defer dialog
+2. ถ้าดักจับ `cancel` จะฆ่า download; **อย่าเรียก `suggest` ที่เก็บไว้เด็ดขาด**
+3. ถ้าปล่อย เรียก `suggest()` ที่เก็บไว้ **ก่อน** แล้วค่อย `resume()` — ลำดับสำคัญ
+
+### 5. macOS-only กรณีอื่นต้องเฉยๆ
+
+แอป Download Shuttle มีเฉพาะบน macOS เท่านั้น เรียก `chrome.runtime.getPlatformInfo()` หนึ่งครั้งตอน module load แล้ว cache ผลลัพธ์ไว้ใน `isMacOS` Sync gate ของ `onCreated` จะ bail ทันทีถ้า `isMacOS === false`; `decideDownload()` ก็ await `checkIsMacOS()` อีกครั้งเพื่อกัน race ตอนแรกที่ cache ยังเป็น `null`
+
+### 6. ต้อง consume `chrome.runtime.lastError` เสมอ
+
+ทุก callback ของ `chrome.downloads.*` ส่ง helper `consumeLastError` (หรืออ่าน `chrome.runtime.lastError` แบบ inline) ถ้าไม่ทำ race ทั่วไป (download เสร็จก่อน cancel/pause/resume ของเรา) จะกลายเป็น warning "Unchecked runtime.lastError" ใน console
+
+### 7. ใช้ Alt อย่างเดียวสำหรับ bypass
 
 `event.altKey && !event.metaKey && !event.shiftKey && !event.ctrlKey` เพราะ Cmd/Shift/Ctrl ขัดกับ default ของลิงก์บน macOS (เปิดแท็บใหม่, หน้าต่างใหม่ ฯลฯ)
 
-### 5. การคลิก `downloadshuttle://` บน popup ต้องเป็นคลิกของผู้ใช้จริง
+### 8. การคลิก `downloadshuttle://` บน popup ต้องเป็นคลิกของผู้ใช้จริง
 
 Browser ห้าม extension navigate ไป custom-protocol URL แบบ programmatic Popup ใช้ `<a href="downloadshuttle://...">` แล้วปล่อยให้การคลิก anchor ตามธรรมชาติเป็นตัวเรียก protocol
 
