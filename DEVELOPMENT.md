@@ -26,24 +26,42 @@ User clicks a download link
       ↓
 Browser fires the download
       ↓
-background.js — chrome.downloads.onCreated (async)
-  1. Is this URL in our "browser download" guard list? → allow
-  2. Ask content.js: "is Alt held right now?" → if yes, allow
-  3. Does the URL extension or MIME type match? → if no, allow
-  4. Otherwise: cancel + erase the native download, store the
-     pending download info in chrome.storage.session, open popup
+background.js — chrome.downloads.onCreated
+  1. Sync gates: state in_progress? macOS? extension/MIME match?
+  2. chrome.downloads.pause()  ← immediately
+  3. Track in heldDownloads Map, kick off async decideDownload()
       ↓
-popup.html + popup.js
-  • Reads pending download from chrome.storage.session
-  • Two buttons:
-      Option 1: "📥 Download Shuttle App"   Option 2: "🌐 Browser Download"
-      ↓                                     ↓
-  Triggers the downloadshuttle://         Sends a "browserDownload" message
-  link via a real <a> click. The OS       to background. Background marks the
-  hands the URL to the Download           URLs in its guard list FIRST, then
-  Shuttle app.                            calls chrome.downloads.download() —
-                                          the onCreated handler sees the URL
-                                          in the guard list and lets it pass.
+background.js — chrome.downloads.onDeterminingFilename
+  • If the download is tracked (decision still pending):
+      stash the suggest() callback, return true
+      → defers Chrome's native "Save As" dialog
+      ↓
+background.js — decideDownload() (async)
+  1. macOS check (covers null cache race)
+  2. Re-entry guard (URL in browserDownloadUrls?) → release
+  3. Alt key held? → release
+  4. Otherwise → intercept
+      ↓
+              ┌─── release ───┐         ┌─── intercept ───┐
+              │ call stashed  │         │ cancel + erase  │
+              │ suggest()     │         │ (no suggest —   │
+              │ then resume() │         │  download dies) │
+              └───────────────┘         │ open popup      │
+                                        └─────────────────┘
+                                                ↓
+                                        popup.html + popup.js
+                                        Reads pendingDownload from
+                                        chrome.storage.session.
+                                        Two buttons:
+                                          Option 1: "📥 Download Shuttle App"
+                                          Option 2: "🌐 Browser Download"
+                                            ↓                        ↓
+                                        <a href="downloadshuttle:    Sends "browserDownload"
+                                        //..."> real user click —    message to background.
+                                        OS hands URL to Download     Background adds URLs to
+                                        Shuttle app.                 browserDownloadUrls FIRST,
+                                                                     then chrome.downloads.download()
+                                                                     — re-entry guard releases it.
 ```
 
 ## Project Structure
@@ -69,10 +87,13 @@ DownloadShuttleLink-Chrome/
 ### Key Files Explained
 
 **`background.js`** — Service Worker
-- Owns the `chrome.downloads.onCreated` listener (async)
-- Decides whether to intercept based on URL pathname extension, MIME type, the Alt key, and the re-entry guard
-- Cancels the native download with `chrome.downloads.cancel`
-- Opens the popup window with `chrome.windows.create`
+- Two listeners cooperate:
+  - `chrome.downloads.onCreated` — sync gates, then `chrome.downloads.pause()` and start async `decideDownload()`
+  - `chrome.downloads.onDeterminingFilename` — defers Chrome's "Save As" dialog by returning `true` and stashing `suggest`
+- `decideDownload()` decides intercept based on macOS check, URL pathname extension, MIME type, Alt key, and the re-entry guard
+- On intercept: `chrome.downloads.cancel` + `erase` + open popup with `chrome.windows.create`
+- On release: call the stashed `suggest()` then `chrome.downloads.resume`
+- Every `chrome.downloads.*` callback uses `consumeLastError` to silence "Unchecked runtime.lastError" warnings on benign races
 - Handles `browserDownload` messages from the popup
 
 **`content.js`** — Content Script
@@ -117,15 +138,33 @@ If the guard were in memory only, the service worker could be killed between ste
 
 If the guard were keyed by download ID, the `onCreated` event might fire before `download()`'s callback returns the ID — another race.
 
-### 3. The `onCreated` listener stays `async`
+### 3. Pause first in `onCreated`, decide async
 
-It awaits the message round-trip to the content script for Alt key state. Don't make it synchronous.
+Always `chrome.downloads.pause()` immediately in the `onCreated` listener — sync, before any await. Pausing right at creation works reliably; cancelling later against a paused download also works reliably. The `decideDownload()` async function then runs in the background and either cancels (intercept) or resumes (release).
 
-### 4. Alt-only modifier for bypass
+Do not move the cancel into the sync path of `onCreated` — it must happen after the async decision.
+
+### 4. Defer the "Save As" dialog via `onDeterminingFilename`
+
+Browsers configured with "Ask where to save each file before downloading" will show the native Save As dialog during the determining-filename stage. To suppress it on intercept:
+
+1. In `onDeterminingFilename`, look up the download in `heldDownloads`. If found (decision still pending), stash the `suggest` callback on the entry and `return true` — this defers the dialog.
+2. On intercept, `cancel` kills the download; **never call the stashed `suggest`**.
+3. On release, call the stashed `suggest()` **then** `resume()` — order matters.
+
+### 5. macOS-only, stay passive elsewhere
+
+The Download Shuttle app only exists on macOS. `chrome.runtime.getPlatformInfo()` is awaited once at module load and the result cached in `isMacOS`. The `onCreated` sync gate bails on `isMacOS === false`; `decideDownload()` also awaits `checkIsMacOS()` to cover the first-call race where the cache is still `null`.
+
+### 6. Always consume `chrome.runtime.lastError`
+
+Every `chrome.downloads.*` callback passes the `consumeLastError` helper (or reads `chrome.runtime.lastError` inline). Without this, benign races (download already completed by the time our cancel/pause/resume runs) surface as "Unchecked runtime.lastError" warnings in the console.
+
+### 7. Alt-only modifier for bypass
 
 `event.altKey && !event.metaKey && !event.shiftKey && !event.ctrlKey`. Cmd/Shift/Ctrl all conflict with browser link defaults on macOS (open in new tab, open in new window, etc.).
 
-### 5. The popup click on `downloadshuttle://` must be a real user click
+### 8. The popup click on `downloadshuttle://` must be a real user click
 
 Browsers forbid extensions from navigating to a custom-protocol URL programmatically. The popup uses an `<a href="downloadshuttle://...">` element and lets the natural anchor click handle the protocol invocation.
 
