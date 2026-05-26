@@ -379,7 +379,7 @@ Content script *เข้าถึง* `chrome.storage` ได้ แต่ writ
 
 ## สัญญาอนุญาต
 
-MIT License — ดูไฟล์ LICENSE
+MIT License — ใช้ ดัดแปลง และเผยแพร่ได้อย่างเสรี
 
 ---
 

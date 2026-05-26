@@ -378,7 +378,7 @@ Plus host permissions on `http://*/*` and `https://*/*` so the content script ca
 
 ## License
 
-MIT License — see LICENSE file
+MIT License — free to use, modify, and distribute
 
 ---
 
