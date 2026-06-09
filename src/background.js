@@ -83,6 +83,9 @@ async function takeBrowserDownloadUrl(url) {
 
 // Match against URL pathname only. Using endsWith on the full URL would fail
 // for query strings, e.g. signed CDN links like "file.zip?token=abc".
+// Called for both `url` and `finalUrl`: sites like LM Studio start the download
+// from an extension-less endpoint (/download/latest/...) that 302-redirects to
+// the real ".dmg", so only `finalUrl` carries the extension.
 function shouldInterceptByExtension(url) {
   let pathname;
   try {
@@ -91,12 +94,7 @@ function shouldInterceptByExtension(url) {
     return false;
   }
 
-  for (const extension of FILE_EXTENSIONS) {
-    if (pathname.endsWith(extension)) {
-      return true;
-    }
-  }
-  return false;
+  return FILE_EXTENSIONS.some((extension) => pathname.endsWith(extension));
 }
 
 function shouldInterceptByMime(mimeType) {
@@ -134,11 +132,22 @@ async function isAltKeyPressed() {
 // Popup window
 // ---------------------------------------------------------------------------
 
+// Download Shuttle names the saved file from the URL's last path component (its
+// "name" dict key is ignored for naming). Redirect flows split the good name
+// across url / finalUrl: a GitHub release link carries it in `url` (the CDN
+// `finalUrl` is a UUID), while a "/latest" endpoint carries it in `finalUrl`.
+// Pick whichever already ends in a real filename so the app names it correctly.
+function pickDownloadUrl(downloadItem) {
+  for (const candidate of [ downloadItem.url, downloadItem.finalUrl ]) {
+    if (candidate && shouldInterceptByExtension(candidate)) return candidate;
+  }
+  return downloadItem.finalUrl || downloadItem.url;
+}
+
 async function showDownloadPopup(downloadUrl) {
   try {
     const urls = [ downloadUrl ];
-    const encodedPayload = encodeURIComponent(JSON.stringify(urls));
-    const protocolUrl = 'downloadshuttle://add/' + encodedPayload;
+    const protocolUrl = 'downloadshuttle://add/' + encodeURIComponent(JSON.stringify(urls));
 
     console.log('[Download Shuttle Link] Protocol URL:', protocolUrl);
 
@@ -192,7 +201,11 @@ chrome.downloads.onCreated.addListener(function (downloadItem) {
   if (downloadItem.state !== 'in_progress') return;
   if (isMacOS === false) return;
 
-  const matchByExtension = shouldInterceptByExtension(downloadItem.url);
+  console.log('[Download Shuttle Link] onCreated:', downloadItem.url, '->', downloadItem.finalUrl, downloadItem.mime);
+
+  const matchByExtension =
+    shouldInterceptByExtension(downloadItem.url) ||
+    shouldInterceptByExtension(downloadItem.finalUrl);
   const matchByMime = shouldInterceptByMime(downloadItem.mime);
   if (!matchByExtension && !matchByMime) return;
 
@@ -244,7 +257,8 @@ async function decideDownload(downloadItem) {
       return;
     }
 
-    console.log('[Download Shuttle Link] Intercepting download:', downloadItem.url);
+    const downloadUrl = pickDownloadUrl(downloadItem);
+    console.log('[Download Shuttle Link] Intercepting download:', downloadUrl);
     chrome.downloads.cancel(downloadItem.id, function () {
       void chrome.runtime.lastError;
       chrome.downloads.erase({ id: downloadItem.id }, consumeLastError);
@@ -252,7 +266,7 @@ async function decideDownload(downloadItem) {
     // suggest() is intentionally NOT called — cancel kills the download, so
     // the deferred listener has nothing to release.
     heldDownloads.delete(downloadItem.id);
-    await showDownloadPopup(downloadItem.url);
+    await showDownloadPopup(downloadUrl);
   } catch (e) {
     console.error('[Download Shuttle Link] decideDownload error:', e);
     releaseHeld(downloadItem.id, held);
