@@ -30,7 +30,19 @@
 - แอป Download Shuttle ([ดาวน์โหลดที่นี่](http://fiplab.com))
 - macOS 10.10 ขึ้นไป
 
-**ขั้นตอน:**
+### แนะนำ: ติดตั้งผ่าน Chrome Web Store
+
+วิธีที่ง่ายที่สุดสำหรับผู้ใช้ทั่วไป คลิกเดียวจบ และอัปเดตอัตโนมัติ
+
+1. เปิด [Download Shuttle Link บน Chrome Web Store](https://chromewebstore.google.com/detail/download-shuttle-link/iklcibojkellbfhkbaagcpipiajhjonl)
+2. คลิก **เพิ่มลงใน Chrome**
+3. ยืนยันโดยคลิก **เพิ่มส่วนขยาย**
+4. เสร็จสิ้น!
+
+### สำหรับนักพัฒนา: โหลดส่วนขยายที่แกะแล้ว
+
+สำหรับนักพัฒนาที่ต้องการแก้ไขซอร์สโค้ดหรือทดสอบการเปลี่ยนแปลงในเครื่อง
+
 1. ดาวน์โหลด/โคลนโปรเจกต์นี้
 2. เปิด `chrome://extensions/` (หรือ `edge://extensions/`)
 3. เปิด **โหมดผู้พัฒนา** (สวิตช์มุมขวาบน)
@@ -57,7 +69,7 @@
 
 - **ไฟล์บีบอัด:** `.zip`, `.rar`, `.7z`, `.tar`, `.gz`, `.bz2`, `.xz`
 - **ตัวติดตั้ง:** `.exe`, `.msi`, `.dmg`, `.pkg`, `.deb`, `.rpm`, `.apk`, `.ipa`
-- **เอกสาร:** `.pdf`, `.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`
+- **เอกสาร:** `.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`
 - **วิดีโอ:** `.mp4`, `.mkv`, `.avi`, `.mov`, `.wmv`, `.flv`, `.webm`
 - **เสียง:** `.mp3`, `.wav`, `.flac`, `.aac`, `.ogg`, `.m4a`
 - **อื่นๆ:** `.iso`, `.img`, `.bin`, `.torrent`

@@ -297,18 +297,20 @@ Two failure modes the URL-in-storage approach avoids:
 
 URL-in-session-storage is set before `download()` is called and persists across worker restarts.
 
-### Why use an `async` listener for `onCreated`?
+### Why pause in `onCreated` and decide asynchronously?
 
-We need to await the message round-trip to the content script for the Alt key state:
+The intercept decision needs the Alt key state, which requires an async message round-trip to the content script. But `onCreated` must act synchronously to pause the download before it makes progress. So the two are split:
 
 ```javascript
-chrome.downloads.onCreated.addListener(async function (downloadItem) {
-  const altPressed = await isAltKeyPressed();
-  // ...
+chrome.downloads.onCreated.addListener(function (downloadItem) {
+  // ...sync gates...
+  heldDownloads.set(downloadItem.id, { suggest: null });
+  chrome.downloads.pause(downloadItem.id, consumeLastError); // sync, immediate
+  decideDownload(downloadItem);                              // async, awaits Alt key etc.
 });
 ```
 
-A sync listener would have to make the intercept decision without knowing whether the user is holding Alt.
+`onCreated` pauses immediately, then `decideDownload()` awaits `isAltKeyPressed()` and the macOS/re-entry checks before cancelling (intercept) or resuming (release). Deciding inside the listener would either block the pause or force the decision without knowing whether Alt is held.
 
 ### Why does the content script use messages instead of `chrome.storage` directly?
 
