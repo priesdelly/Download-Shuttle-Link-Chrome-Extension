@@ -2,7 +2,7 @@
 
 **ภาษา:** [English](README.md) | [ไทย (Thai)](#download-shuttle-link)
 
-ส่วนขยาย Chrome/Edge ที่ส่งไฟล์ดาวน์โหลดของคุณไปยังแอป [Download Shuttle](http://fiplab.com) บน macOS
+ส่วนขยาย Chrome/Edge ที่ส่งไฟล์ดาวน์โหลดของคุณไปยังแอป [Download Shuttle](https://apps.apple.com/app/download-shuttle-speed-boost/id847809913) บน macOS
 
 ## ฟีเจอร์
 
@@ -26,8 +26,8 @@
 ## การติดตั้ง
 
 **ความต้องการ:**
-- เบราว์เซอร์ Chrome หรือ Edge
-- แอป Download Shuttle ([ดาวน์โหลดที่นี่](http://fiplab.com))
+- เบราว์เซอร์: Google Chrome, Microsoft Edge, Brave
+- แอป Download Shuttle ([ดาวน์โหลดที่นี่ (App Store)](https://apps.apple.com/app/download-shuttle-speed-boost/id847809913))
 - macOS 10.10 ขึ้นไป
 
 ### แนะนำ: ติดตั้งผ่าน Chrome Web Store
