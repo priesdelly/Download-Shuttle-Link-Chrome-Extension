@@ -2,7 +2,7 @@
 
 **Languages:** [English](#download-shuttle-link) | [ไทย (Thai)](README_TH.md)
 
-A Chrome/Edge extension that sends your downloads to the [Download Shuttle](http://fiplab.com) app on macOS.
+A Chrome/Edge extension that sends your downloads to the [Download Shuttle](https://apps.apple.com/app/download-shuttle-speed-boost/id847809913) app on macOS.
 
 ## Features
 
@@ -26,8 +26,8 @@ A Chrome/Edge extension that sends your downloads to the [Download Shuttle](http
 ## Installation
 
 **Requirements:**
-- Chrome or Edge browser
-- Download Shuttle app ([download here](http://fiplab.com))
+- Browser: Google Chrome, Microsoft Edge, Brave
+- Download Shuttle app ([download here (App Store)](https://apps.apple.com/app/download-shuttle-speed-boost/id847809913))
 - macOS 10.10+
 
 ### Recommended: Install from Chrome Web Store
