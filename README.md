@@ -30,7 +30,19 @@ A Chrome/Edge extension that sends your downloads to the [Download Shuttle](http
 - Download Shuttle app ([download here](http://fiplab.com))
 - macOS 10.10+
 
-**Steps:**
+### Recommended: Install from Chrome Web Store
+
+The easiest way for regular users. One click, automatic updates.
+
+1. Open the [Download Shuttle Link on the Chrome Web Store](https://chromewebstore.google.com/detail/download-shuttle-link/iklcibojkellbfhkbaagcpipiajhjonl)
+2. Click **Add to Chrome**
+3. Confirm by clicking **Add extension**
+4. Done!
+
+### Developer: Load unpacked
+
+For developers who want to modify the source or test changes locally.
+
 1. Download/clone this repository
 2. Open `chrome://extensions/` (or `edge://extensions/`)
 3. Enable **Developer Mode** (top-right toggle)
@@ -57,7 +69,7 @@ A Chrome/Edge extension that sends your downloads to the [Download Shuttle](http
 
 - **Archives:** `.zip`, `.rar`, `.7z`, `.tar`, `.gz`, `.bz2`, `.xz`
 - **Installers:** `.exe`, `.msi`, `.dmg`, `.pkg`, `.deb`, `.rpm`, `.apk`, `.ipa`
-- **Documents:** `.pdf`, `.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`
+- **Documents:** `.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`
 - **Videos:** `.mp4`, `.mkv`, `.avi`, `.mov`, `.wmv`, `.flv`, `.webm`
 - **Audio:** `.mp3`, `.wav`, `.flac`, `.aac`, `.ogg`, `.m4a`
 - **Other:** `.iso`, `.img`, `.bin`, `.torrent`
